@@ -15,13 +15,6 @@ Backend:
 
 ```bash
 cd backend
-./mvnw spring-boot:run
-```
-
-Если Maven wrapper не добавлен, используйте локальный Maven:
-
-```bash
-cd backend
 mvn spring-boot:run
 ```
 
