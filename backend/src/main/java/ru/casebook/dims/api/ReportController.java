@@ -21,14 +21,14 @@ public class ReportController {
     }
 
     @PostMapping("/api/cases/{caseId}/reports/preview")
-    public ReportPreviewResponse preview(@PathVariable UUID caseId) {
-        return reportService.preview(caseId);
+    public ReportPreviewResponse preview(@PathVariable UUID caseId, @RequestParam(defaultValue = "FULL") String template) {
+        return reportService.preview(caseId, template);
     }
 
     @PostMapping("/api/cases/{caseId}/reports")
-    public ReportResponse approve(@RequestHeader("X-User-Id") String userId, @PathVariable UUID caseId, @RequestParam(defaultValue = "false") boolean force) {
+    public ReportResponse approve(@RequestHeader("X-User-Id") String userId, @PathVariable UUID caseId, @RequestParam(defaultValue = "false") boolean force, @RequestParam(defaultValue = "FULL") String template) {
         UserAccount actor = currentUserService.requireUser(userId);
-        return ReportResponse.from(reportService.approve(actor, caseId, force));
+        return ReportResponse.from(reportService.approve(actor, caseId, force, template));
     }
 
     @GetMapping("/api/cases/{caseId}/reports")
