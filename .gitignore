@@ -1,0 +1,12 @@
+node_modules/
+dist/
+target/
+.idea/
+.vscode/
+*.log
+storage/
+frontend/dist/
+frontend/node_modules/
+backend/target/
+docs
+.agents
