@@ -30,12 +30,16 @@ type LabRequest = { id: string; evidenceId: string; profile: string; questions: 
 type Graph = { nodes: { type: string; id: string; label: string; status: string }[]; edges: { id: string; source: { type: string; id: string }; target: { type: string; id: string }; semanticType: string; confidence: string }[]; filtered: boolean; warning?: string };
 type ReportPreview = { content: string; hasOpenLabRequests: boolean; warning?: string };
 type ReportFile = { id: string; registrationNumber: string; status: string };
-type FormKind = "case" | "evidence" | "agentResult";
+type FormKind = "case" | "evidence" | "task" | "lab" | "labResult" | "edge" | "agentResult";
 type FieldErrors = Record<string, string>;
 type ApiErrorBody = { code?: string; message?: string; details?: Record<string, unknown> };
 type CaseDraft = { title: string; openedAt: string; priority: string; description: string };
-type EvidenceDraft = { name: string; type: string; importance: string; description: string; discoveryDateTime: string; locationTitle: string };
+type EvidenceDraft = { name: string; type: string; importance: string; description: string; discoveryDateTime: string; locationTitle: string; latitude: string; longitude: string };
 type AgentResultDraft = { taskId: string; note: string; evidenceName: string; evidenceType: string; locationTitle: string };
+type TaskDraft = { title: string; description: string; assigneeId: string; priority: string; deadline: string };
+type LabDraft = { evidenceId: string; profile: string; questions: string; desiredDueDate: string };
+type EdgeDraft = { source: string; target: string; semanticType: string; confidence: string; hypothesisTitle: string; hypothesisText: string };
+type GraphNode = Graph["nodes"][number];
 
 const emptyCaseDraft = (): CaseDraft => ({
   title: "",
@@ -51,8 +55,21 @@ const emptyEvidenceDraft = (): EvidenceDraft => ({
   description: "",
   discoveryDateTime: new Date().toISOString().slice(0, 16),
   locationTitle: "",
+  latitude: "",
+  longitude: "",
 });
 const emptyAgentResultDraft = (): AgentResultDraft => ({ taskId: "", note: "", evidenceName: "", evidenceType: "цифровая", locationTitle: "" });
+const futureDate = (days: number) => new Date(Date.now() + days * 86400000).toISOString().slice(0, 16);
+const emptyTaskDraft = (): TaskDraft => ({ title: "", description: "", assigneeId: "", priority: "MEDIUM", deadline: futureDate(1) });
+const emptyLabDraft = (): LabDraft => ({ evidenceId: "", profile: "", questions: "", desiredDueDate: futureDate(2) });
+const emptyEdgeDraft = (): EdgeDraft => ({ source: "", target: "", semanticType: "", confidence: "MEDIUM", hypothesisTitle: "", hypothesisText: "" });
+const nodeKey = (node: Pick<GraphNode, "type" | "id">) => `${node.type}:${node.id}`;
+const nodePoint = (index: number) => {
+  const points = [[150, 90], [750, 105], [450, 215], [170, 340], [760, 330], [450, 70], [70, 215], [850, 215]];
+  const [x, y] = points[index % points.length];
+  const ring = Math.floor(index / points.length);
+  return { x: x + ring * 18, y: y + ring * 10 };
+};
 
 const NETWORK_MESSAGE = "Нестабильность сети, проверьте подключение к интернету";
 const DRAFTS_KEY = "dims-form-drafts-v1";
@@ -122,13 +139,23 @@ function App() {
   const [graph, setGraph] = useState<Graph | null>(null);
   const [preview, setPreview] = useState<ReportPreview | null>(null);
   const [approvedReport, setApprovedReport] = useState<ReportFile | null>(null);
+  const [reportTemplate, setReportTemplate] = useState("FULL");
   const [message, setMessage] = useState("");
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [activeForm, setActiveForm] = useState<FormKind | null>(null);
   const [caseDraft, setCaseDraft] = useState<CaseDraft>(() => loadDrafts().caseDraft);
   const [evidenceDraft, setEvidenceDraft] = useState<EvidenceDraft>(() => loadDrafts().evidenceDraft);
   const [agentResultDraft, setAgentResultDraft] = useState<AgentResultDraft>(() => loadDrafts().agentResultDraft);
+  const [taskDraft, setTaskDraft] = useState<TaskDraft>(emptyTaskDraft);
+  const [labDraft, setLabDraft] = useState<LabDraft>(emptyLabDraft);
+  const [edgeDraft, setEdgeDraft] = useState<EdgeDraft>(emptyEdgeDraft);
+  const [connectMode, setConnectMode] = useState(false);
+  const [connectSelection, setConnectSelection] = useState<string[]>([]);
   const [resultPhoto, setResultPhoto] = useState<File | null>(null);
+  const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
+  const [activeLabId, setActiveLabId] = useState("");
+  const [labResultText, setLabResultText] = useState("");
+  const [editingTaskId, setEditingTaskId] = useState("");
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [isOnline, setIsOnline] = useState(() => navigator.onLine);
   const [isPending, startTransition] = useTransition();
@@ -210,7 +237,7 @@ function App() {
     };
   }, []);
 
-  const agent = users.find((user) => user.role === "AGENT");
+  const assignees = users.filter((user) => user.role === "AGENT" || user.role === "ASSISTANT");
 
   async function createCase(draft: CaseDraft) {
     if (!userId) return;
@@ -241,10 +268,19 @@ function App() {
         description: draft.description.trim(),
         discoveryDateTime: new Date(draft.discoveryDateTime).toISOString(),
         locationTitle: draft.locationTitle.trim() || undefined,
+        latitude: draft.latitude ? Number(draft.latitude) : undefined,
+        longitude: draft.longitude ? Number(draft.longitude) : undefined,
       }),
     });
+    if (evidenceFile) {
+      await request(`/evidence/${created.id}/attachments`, userId, {
+        method: "POST",
+        body: JSON.stringify({ fileName: evidenceFile.name, mimeType: evidenceFile.type || "application/octet-stream", sizeBytes: evidenceFile.size }),
+      });
+    }
     setEvidence((items) => [created, ...items]);
     setEvidenceDraft(emptyEvidenceDraft());
+    setEvidenceFile(null);
     setActiveForm(null);
     setMessage(`Добавлена улика ${created.registrationNumber}`);
     await loadCaseDetails(selectedCaseId);
@@ -258,6 +294,38 @@ function App() {
   function closeForm() {
     setFieldErrors({});
     setActiveForm(null);
+    if (activeForm === "edge") setConnectSelection([]);
+  }
+
+  function startConnecting() {
+    if ((graph?.nodes.length ?? 0) < 2) {
+      setMessage("Для связи нужны минимум два блока");
+      return;
+    }
+    setConnectSelection([]);
+    setEdgeDraft(emptyEdgeDraft());
+    setConnectMode(true);
+    setMessage("Выберите первый блок на доске");
+  }
+
+  function selectGraphNode(node: GraphNode) {
+    if (!connectMode) return;
+    const key = nodeKey(node);
+    if (!connectSelection.length) {
+      setConnectSelection([key]);
+      setEdgeDraft((draft) => ({ ...draft, source: key }));
+      setMessage("Теперь выберите второй блок");
+      return;
+    }
+    if (connectSelection[0] === key) {
+      setMessage("Выберите другой блок");
+      return;
+    }
+    setConnectSelection([connectSelection[0], key]);
+    setEdgeDraft((draft) => ({ ...draft, target: key }));
+    setConnectMode(false);
+    setFieldErrors({});
+    setActiveForm("edge");
   }
 
   function openAgentResult(task: TaskItem) {
@@ -298,6 +366,7 @@ function App() {
       description: required(evidenceDraft.description, "Описание"),
       discoveryDateTime: required(evidenceDraft.discoveryDateTime, "Дата обнаружения"),
     };
+    if (evidenceFile && evidenceFile.size > 20 * 1024 * 1024) errors.description = "Файл превышает лимит 20 МБ";
     const visibleErrors = Object.fromEntries(Object.entries(errors).filter(([, value]) => value));
     setFieldErrors(visibleErrors);
     if (Object.keys(visibleErrors).length) return;
@@ -342,62 +411,137 @@ function App() {
     });
   }
 
+  function submitTask(event: React.FormEvent) {
+    event.preventDefault();
+    const errors = { title: required(taskDraft.title, "Название"), description: required(taskDraft.description, "Описание"), assigneeId: required(taskDraft.assigneeId, "Исполнитель"), deadline: required(taskDraft.deadline, "Срок") };
+    const visibleErrors = Object.fromEntries(Object.entries(errors).filter(([, value]) => value));
+    setFieldErrors(visibleErrors);
+    if (Object.keys(visibleErrors).length) return;
+    startTransition(() => createTask().catch(handleFormError));
+  }
+
+  function submitLab(event: React.FormEvent) {
+    event.preventDefault();
+    const errors = { evidenceId: required(labDraft.evidenceId, "Улика"), profile: required(labDraft.profile, "Профиль"), questions: required(labDraft.questions, "Вопросы"), desiredDueDate: required(labDraft.desiredDueDate, "Срок") };
+    const visibleErrors = Object.fromEntries(Object.entries(errors).filter(([, value]) => value));
+    setFieldErrors(visibleErrors);
+    if (Object.keys(visibleErrors).length) return;
+    startTransition(() => createLabRequest().catch(handleFormError));
+  }
+
+  function submitEdge(event: React.FormEvent) {
+    event.preventDefault();
+    const errors = { source: required(edgeDraft.source, "Источник"), target: required(edgeDraft.target, "Цель"), semanticType: required(edgeDraft.semanticType, "Тип связи"), hypothesisTitle: required(edgeDraft.hypothesisTitle, "Название гипотезы"), hypothesisText: required(edgeDraft.hypothesisText, "Обоснование") };
+    if (edgeDraft.source && edgeDraft.source === edgeDraft.target) errors.target = "Выберите другой блок";
+    const visibleErrors = Object.fromEntries(Object.entries(errors).filter(([, value]) => value));
+    setFieldErrors(visibleErrors);
+    if (Object.keys(visibleErrors).length) return;
+    startTransition(() => createGraphEdge().catch(handleFormError));
+  }
+
   async function createTask() {
-    if (!userId || !selectedCaseId || !agent) return;
-    const created = await request<TaskItem>(`/cases/${selectedCaseId}/tasks`, userId, {
-      method: "POST",
+    if (!userId || !selectedCaseId) return;
+    const created = await request<TaskItem>(editingTaskId ? `/tasks/${editingTaskId}` : `/cases/${selectedCaseId}/tasks`, userId, {
+      method: editingTaskId ? "PATCH" : "POST",
       body: JSON.stringify({
-        title: "Опросить свидетеля на вокзале",
-        description: "Уточнить, видел ли свидетель подозреваемого вечером.",
-        assigneeId: agent.id,
-        priority: "HIGH",
-        deadline: new Date(Date.now() + 86400000).toISOString(),
+        ...taskDraft,
+        title: taskDraft.title.trim(),
+        description: taskDraft.description.trim(),
+        deadline: new Date(taskDraft.deadline).toISOString(),
       }),
     });
-    setTasks((items) => [created, ...items]);
-    setMessage(`Назначена задача ${created.title}`);
+    setTasks((items) => editingTaskId ? items.map((item) => item.id === created.id ? created : item) : [created, ...items]);
+    setTaskDraft(emptyTaskDraft());
+    setEditingTaskId("");
+    setActiveForm(null);
+    setMessage(editingTaskId ? `Задача ${created.title} переназначена` : `Назначена задача ${created.title}`);
+  }
+
+  function editTask(task: TaskItem) {
+    setEditingTaskId(task.id);
+    setTaskDraft({ title: task.title, description: task.description, assigneeId: task.assigneeId, priority: task.priority, deadline: new Date(task.deadline).toISOString().slice(0, 16) });
+    openForm("task");
+  }
+
+  async function changeTaskStatus(task: TaskItem, status: "IN_PROGRESS" | "DONE") {
+    if (!userId) return;
+    const updated = await request<TaskItem>(`/tasks/${task.id}/status`, userId, { method: "PATCH", body: JSON.stringify({ status, resultText: task.resultText ?? null }) });
+    setMyTasks((items) => items.map((item) => item.id === updated.id ? updated : item));
+    setTasks((items) => items.map((item) => item.id === updated.id ? updated : item));
+    setMessage(`Статус задачи: ${status}`);
+  }
+
+  async function changeLabStatus(id: string) {
+    if (!userId) return;
+    const updated = await request<LabRequest>(`/lab-requests/${id}/status`, userId, { method: "PATCH", body: JSON.stringify({ status: "IN_PROGRESS" }) });
+    setLabQueue((items) => items.map((item) => item.id === id ? updated : item));
+    setMessage("Экспертиза принята в работу");
+  }
+
+  async function completeLab() {
+    if (!userId || !activeLabId) return;
+    const updated = await request<LabRequest>(`/lab-requests/${activeLabId}/result`, userId, { method: "POST", body: JSON.stringify({ resultText: labResultText }) });
+    setLabQueue((items) => items.map((item) => item.id === activeLabId ? updated : item));
+    setActiveForm(null);
+    setLabResultText("");
+    setMessage("Заключение сохранено, экспертиза завершена");
+    if (selectedCaseId) await loadCaseDetails(selectedCaseId);
+  }
+
+  function submitLabResult(event: React.FormEvent) {
+    event.preventDefault();
+    const error = labResultText.length < 10000 ? "Заключение должно содержать не менее 10 000 знаков" : "";
+    setFieldErrors(error ? { resultText: error } : {});
+    if (!error) startTransition(() => completeLab().catch(handleFormError));
   }
 
   async function createLabRequest() {
-    if (!userId || !firstEvidence) return;
-    const created = await request<LabRequest>(`/evidence/${firstEvidence.id}/lab-requests`, userId, {
+    if (!userId || !labDraft.evidenceId) return;
+    const created = await request<LabRequest>(`/evidence/${labDraft.evidenceId}/lab-requests`, userId, {
       method: "POST",
       body: JSON.stringify({
-        profile: "Биологический анализ",
-        questions: "Определить происхождение следов и возможную связь с подозреваемым.",
-        desiredDueDate: new Date(Date.now() + 172800000).toISOString(),
+        profile: labDraft.profile.trim(),
+        questions: labDraft.questions.trim(),
+        desiredDueDate: new Date(labDraft.desiredDueDate).toISOString(),
       }),
     });
     setLabs((items) => [created, ...items]);
+    setLabDraft(emptyLabDraft());
+    setActiveForm(null);
     setMessage("Лабораторный запрос направлен");
   }
 
   async function createGraphEdge() {
-    if (!userId || !selectedCase || !firstEvidence) return;
+    if (!userId || !selectedCase) return;
+    const [sourceType, sourceId] = edgeDraft.source.split(":");
+    const [targetType, targetId] = edgeDraft.target.split(":");
     await request(`/cases/${selectedCase.id}/graph/edges`, userId, {
       method: "POST",
       body: JSON.stringify({
-        source: { type: "EVIDENCE", id: firstEvidence.id },
-        target: { type: "CASE", id: selectedCase.id },
-        semanticType: "улика усиливает основную гипотезу",
-        confidence: "HIGH",
-        hypothesisTitle: "Личная связь с мотивом",
-        hypothesisText: "Найденный объект может указывать на личный мотив и связь подозреваемого с местом происшествия.",
+        source: { type: sourceType, id: sourceId },
+        target: { type: targetType, id: targetId },
+        semanticType: edgeDraft.semanticType.trim(),
+        confidence: edgeDraft.confidence,
+        hypothesisTitle: edgeDraft.hypothesisTitle.trim(),
+        hypothesisText: edgeDraft.hypothesisText.trim(),
       }),
     });
-    setMessage("Гипотеза и связь добавлены в граф");
+    setEdgeDraft(emptyEdgeDraft());
+    setConnectSelection([]);
+    setActiveForm(null);
+    setMessage("Связь и гипотеза добавлены в граф");
     await loadCaseDetails(selectedCase.id);
   }
 
-  async function generateReport(force = false) {
+  async function generateReport(force: boolean | null = null) {
     if (!userId || !selectedCaseId) return;
-    if (!force) {
-      const data = await request<ReportPreview>(`/cases/${selectedCaseId}/reports/preview`, userId, { method: "POST" });
+    if (force === null) {
+      const data = await request<ReportPreview>(`/cases/${selectedCaseId}/reports/preview?template=${reportTemplate}`, userId, { method: "POST" });
       setPreview(data);
       setMessage(data.warning ?? "Предпросмотр отчета готов");
       return;
     }
-    const report = await request<ReportFile>(`/cases/${selectedCaseId}/reports?force=true`, userId, { method: "POST" });
+    const report = await request<ReportFile>(`/cases/${selectedCaseId}/reports?force=${force}&template=${reportTemplate}`, userId, { method: "POST" });
     setApprovedReport(report);
     setMessage(`Отчет ${report.registrationNumber} утвержден и сохранен`);
   }
@@ -418,12 +562,12 @@ function App() {
     () => [
       { label: "Создать дело", icon: BookOpen, run: () => Promise.resolve(openForm("case")) },
       { label: "Добавить улику", icon: Plus, run: () => Promise.resolve(openForm("evidence")) },
-      { label: "Назначить задачу", icon: ClipboardList, run: createTask },
-      { label: "Запрос в лабораторию", icon: Beaker, run: createLabRequest },
-      { label: "Создать связь", icon: GitBranch, run: createGraphEdge },
-      { label: "Предпросмотр отчета", icon: FileText, run: () => generateReport(false) },
+      { label: "Назначить задачу", icon: ClipboardList, run: () => Promise.resolve(openForm("task")) },
+      { label: "Запрос в лабораторию", icon: Beaker, run: () => { setLabDraft((draft) => ({ ...draft, evidenceId: draft.evidenceId || firstEvidence?.id || "" })); return Promise.resolve(openForm("lab")); } },
+      { label: "Связать блоки", icon: GitBranch, run: () => Promise.resolve(startConnecting()) },
+      { label: "Предпросмотр отчета", icon: FileText, run: () => generateReport(null) },
     ],
-    [userId, selectedCaseId, firstEvidence?.id, agent?.id],
+    [userId, selectedCaseId, firstEvidence?.id],
   );
 
   return (
@@ -485,7 +629,7 @@ function App() {
               {action.label}
             </button>
           ))}
-          <button className="primary" onClick={() => startTransition(() => generateReport(true).catch((error) => setMessage(error.message)))}>
+          <button className="primary" onClick={() => startTransition(() => generateReport(false).catch(handleFormError))}>
             {isPending ? <Loader2 className="spin" size={18} /> : <CheckCircle2 size={18} />}
             Утвердить отчет
           </button>
@@ -536,9 +680,64 @@ function App() {
               <FormField label="Место обнаружения" wide>
                 <input value={evidenceDraft.locationTitle} onChange={(event) => setEvidenceDraft((draft) => ({ ...draft, locationTitle: event.target.value }))} />
               </FormField>
+              <FormField label="Широта"><input type="number" step="any" value={evidenceDraft.latitude} onChange={(event) => setEvidenceDraft((draft) => ({ ...draft, latitude: event.target.value }))} /></FormField>
+              <FormField label="Долгота"><input type="number" step="any" value={evidenceDraft.longitude} onChange={(event) => setEvidenceDraft((draft) => ({ ...draft, longitude: event.target.value }))} /></FormField>
+              <FormField label="Фото или файл до 20 МБ" error={evidenceFile && evidenceFile.size > 20 * 1024 * 1024 ? "Файл превышает лимит 20 МБ" : undefined} wide>
+                <input type="file" onChange={(event) => setEvidenceFile(event.target.files?.[0] ?? null)} />
+              </FormField>
               <FormField label="Описание" error={fieldErrors.description} wide>
                 <textarea value={evidenceDraft.description} onChange={(event) => setEvidenceDraft((draft) => ({ ...draft, description: event.target.value }))} rows={4} />
               </FormField>
+              <FormActions pending={isPending} onCancel={closeForm} />
+            </form>
+          </FormDialog>
+        ) : null}
+
+        {activeForm === "task" ? (
+          <FormDialog title={editingTaskId ? "Переназначить задачу" : "Новое поручение"} onClose={closeForm}>
+            <form className="entity-form" onSubmit={submitTask} noValidate>
+              <FormField label="Название" error={fieldErrors.title}><input value={taskDraft.title} onChange={(event) => setTaskDraft((draft) => ({ ...draft, title: event.target.value }))} autoFocus /></FormField>
+              <FormField label="Исполнитель" error={fieldErrors.assigneeId}><select value={taskDraft.assigneeId} onChange={(event) => setTaskDraft((draft) => ({ ...draft, assigneeId: event.target.value }))}><option value="">Выберите</option>{assignees.map((user) => <option key={user.id} value={user.id}>{user.displayName}</option>)}</select></FormField>
+              <FormField label="Приоритет"><select value={taskDraft.priority} onChange={(event) => setTaskDraft((draft) => ({ ...draft, priority: event.target.value }))}><option value="LOW">Низкий</option><option value="MEDIUM">Средний</option><option value="HIGH">Высокий</option></select></FormField>
+              <FormField label="Срок" error={fieldErrors.deadline}><input type="datetime-local" value={taskDraft.deadline} onChange={(event) => setTaskDraft((draft) => ({ ...draft, deadline: event.target.value }))} /></FormField>
+              <FormField label="Описание" error={fieldErrors.description} wide><textarea rows={4} value={taskDraft.description} onChange={(event) => setTaskDraft((draft) => ({ ...draft, description: event.target.value }))} /></FormField>
+              <FormActions pending={isPending} onCancel={closeForm} />
+            </form>
+          </FormDialog>
+        ) : null}
+
+        {activeForm === "lab" ? (
+          <FormDialog title="Запрос на экспертизу" onClose={closeForm}>
+            <form className="entity-form" onSubmit={submitLab} noValidate>
+              <FormField label="Улика" error={fieldErrors.evidenceId}><select value={labDraft.evidenceId} onChange={(event) => setLabDraft((draft) => ({ ...draft, evidenceId: event.target.value }))}><option value="">Выберите</option>{evidence.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></FormField>
+              <FormField label="Профиль экспертизы" error={fieldErrors.profile}><input value={labDraft.profile} onChange={(event) => setLabDraft((draft) => ({ ...draft, profile: event.target.value }))} autoFocus /></FormField>
+              <FormField label="Желаемый срок" error={fieldErrors.desiredDueDate}><input type="datetime-local" value={labDraft.desiredDueDate} onChange={(event) => setLabDraft((draft) => ({ ...draft, desiredDueDate: event.target.value }))} /></FormField>
+              <FormField label="Вопросы эксперту" error={fieldErrors.questions} wide><textarea rows={4} value={labDraft.questions} onChange={(event) => setLabDraft((draft) => ({ ...draft, questions: event.target.value }))} /></FormField>
+              <FormActions pending={isPending} onCancel={closeForm} />
+            </form>
+          </FormDialog>
+        ) : null}
+
+        {activeForm === "labResult" ? (
+          <FormDialog title="Заключение эксперта" onClose={closeForm}>
+            <form className="entity-form" onSubmit={submitLabResult} noValidate>
+              <FormField label={`Текст заключения · ${labResultText.length}/10 000`} error={fieldErrors.resultText} wide>
+                <textarea rows={12} value={labResultText} onChange={(event) => setLabResultText(event.target.value)} autoFocus />
+              </FormField>
+              <FormActions pending={isPending} onCancel={closeForm} />
+            </form>
+          </FormDialog>
+        ) : null}
+
+        {activeForm === "edge" ? (
+          <FormDialog title="Описание связи" onClose={closeForm}>
+            <form className="entity-form" onSubmit={submitEdge} noValidate>
+              <FormField label="От блока" error={fieldErrors.source}><GraphNodeSelect value={edgeDraft.source} nodes={graph?.nodes ?? []} onChange={(source) => setEdgeDraft((draft) => ({ ...draft, source }))} /></FormField>
+              <FormField label="К блоку" error={fieldErrors.target}><GraphNodeSelect value={edgeDraft.target} nodes={graph?.nodes ?? []} onChange={(target) => setEdgeDraft((draft) => ({ ...draft, target }))} /></FormField>
+              <FormField label="Тип связи" error={fieldErrors.semanticType}><input value={edgeDraft.semanticType} onChange={(event) => setEdgeDraft((draft) => ({ ...draft, semanticType: event.target.value }))} placeholder="например, подтверждает" /></FormField>
+              <FormField label="Достоверность"><select value={edgeDraft.confidence} onChange={(event) => setEdgeDraft((draft) => ({ ...draft, confidence: event.target.value }))}><option value="LOW">Низкая</option><option value="MEDIUM">Средняя</option><option value="HIGH">Высокая</option></select></FormField>
+              <FormField label="Гипотеза" error={fieldErrors.hypothesisTitle} wide><input value={edgeDraft.hypothesisTitle} onChange={(event) => setEdgeDraft((draft) => ({ ...draft, hypothesisTitle: event.target.value }))} /></FormField>
+              <FormField label="Обоснование" error={fieldErrors.hypothesisText} wide><textarea rows={3} value={edgeDraft.hypothesisText} onChange={(event) => setEdgeDraft((draft) => ({ ...draft, hypothesisText: event.target.value }))} /></FormField>
               <FormActions pending={isPending} onCancel={closeForm} />
             </form>
           </FormDialog>
@@ -590,8 +789,12 @@ function App() {
                 <strong>{item.title}</strong>
                 <span>{item.status} · {new Date(item.deadline).toLocaleDateString("ru-RU")}</span>
                 {(currentUser?.role === "AGENT" || currentUser?.role === "ASSISTANT") && item.status !== "DONE" ? (
-                  <button className="result-action" onClick={() => openAgentResult(item)}><Camera size={16} /> Добавить результат</button>
+                  <div className="row-actions">
+                    {item.status === "ASSIGNED" ? <button className="result-action" onClick={() => startTransition(() => changeTaskStatus(item, "IN_PROGRESS").catch(handleFormError))}>Принять в работу</button> : null}
+                    <button className="result-action" onClick={() => openAgentResult(item)}><Camera size={16} /> Передать результат</button>
+                  </div>
                 ) : null}
+                {currentUser?.role === "DETECTIVE" && item.status !== "DONE" ? <button className="result-action" onClick={() => editTask(item)}>Переназначить</button> : null}
               </article>
             ))}
           </Panel>
@@ -599,7 +802,9 @@ function App() {
             {visibleLabs.map((item) => (
               <article className="row" key={item.id}>
                 <strong>{item.profile}</strong>
-                <span>{item.status}</span>
+                <span>{item.status} · до {new Date(item.desiredDueDate).toLocaleDateString("ru-RU")}</span>
+                {currentUser?.role === "LAB_ANALYST" && item.status === "CREATED" ? <button className="result-action" onClick={() => startTransition(() => changeLabStatus(item.id).catch(handleFormError))}>Принять в работу</button> : null}
+                {currentUser?.role === "LAB_ANALYST" && item.status !== "COMPLETED" ? <button className="result-action" onClick={() => { setActiveLabId(item.id); setFieldErrors({}); setActiveForm("labResult"); }}>Внести заключение</button> : null}
               </article>
             ))}
           </Panel>
@@ -609,16 +814,50 @@ function App() {
           <div className="graph-panel">
             <div className="panel-heading">
               <h2>Граф связей</h2>
-              <span>{graph?.nodes.length ?? 0} узлов · {graph?.edges.length ?? 0} связей</span>
+              <div className="graph-toolbar">
+                <span>{graph?.nodes.length ?? 0} узлов · {graph?.edges.length ?? 0} связей</span>
+                <button type="button" onClick={startConnecting} className={connectMode ? "active" : ""}><GitBranch size={15} /> Связать</button>
+              </div>
             </div>
             {graph?.warning && <div className="warning">{graph.warning}</div>}
-            <div className="graph-canvas">
+            <div className={`graph-canvas${connectMode ? " is-connecting" : ""}`}>
+              {connectMode ? (
+                <div className="connect-hint">
+                  <strong>{connectSelection.length ? "Выберите второй блок" : "Выберите первый блок"}</strong>
+                  <button type="button" onClick={() => { setConnectMode(false); setConnectSelection([]); setMessage(""); }}>Отмена</button>
+                </div>
+              ) : null}
+              <svg className="graph-lines" viewBox="0 0 1000 430" preserveAspectRatio="none" aria-hidden="true">
+                <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" /></marker></defs>
+                {graph?.edges.map((edge) => {
+                  const sourceIndex = graph.nodes.findIndex((node) => nodeKey(node) === nodeKey(edge.source));
+                  const targetIndex = graph.nodes.findIndex((node) => nodeKey(node) === nodeKey(edge.target));
+                  if (sourceIndex < 0 || targetIndex < 0) return null;
+                  const source = nodePoint(sourceIndex);
+                  const target = nodePoint(targetIndex);
+                  return <line key={edge.id} x1={source.x} y1={source.y} x2={target.x} y2={target.y} markerEnd="url(#arrow)" />;
+                })}
+              </svg>
               {graph?.nodes.map((node, index) => (
-                <div className={`node node-${index % 5}`} key={`${node.type}-${node.id}`}>
+                <button
+                  type="button"
+                  className={`node${connectSelection.includes(nodeKey(node)) ? " is-selected" : ""}`}
+                  style={{ left: `${nodePoint(index).x / 10}%`, top: `${nodePoint(index).y / 4.3}%` }}
+                  key={nodeKey(node)}
+                  onClick={() => selectGraphNode(node)}
+                  aria-pressed={connectSelection.includes(nodeKey(node))}
+                >
                   <strong>{node.label}</strong>
                   <span>{node.type}</span>
-                </div>
+                </button>
               ))}
+            </div>
+            <div className="edge-list">
+              {graph?.edges.map((edge) => {
+                const source = graph.nodes.find((node) => node.type === edge.source.type && node.id === edge.source.id);
+                const target = graph.nodes.find((node) => node.type === edge.target.type && node.id === edge.target.id);
+                return <div key={edge.id}><strong>{source?.label ?? edge.source.type}</strong><span> {edge.semanticType} → </span><strong>{target?.label ?? edge.target.type}</strong><small>{edge.confidence}</small></div>;
+              })}
             </div>
           </div>
           <div className="report-panel">
@@ -626,7 +865,12 @@ function App() {
               <h2>Отчет</h2>
               <Activity size={18} />
             </div>
+            <div className="report-options">
+              <label>Формат<select value="TEXT" disabled><option>TEXT</option></select></label>
+              <label>Шаблон<select value={reportTemplate} onChange={(event) => setReportTemplate(event.target.value)}><option value="FULL">Полный аналитический</option><option value="SUMMARY">Краткая сводка</option></select></label>
+            </div>
             <pre>{preview?.content ?? "Сформируйте предпросмотр, чтобы проверить обязательные поля, экспертизы и гипотезы."}</pre>
+            {preview?.hasOpenLabRequests ? <button className="force-button" onClick={() => startTransition(() => generateReport(true).catch(handleFormError))}>Продолжить с пометкой «Данные ожидаются»</button> : null}
             {approvedReport ? (
               <button className="download-button" onClick={() => startTransition(() => downloadReport().catch((error) => setMessage(error.message)))} disabled={isPending}>
                 <FileText size={18} /> Скачать {approvedReport.registrationNumber}
@@ -648,6 +892,15 @@ function Panel({ title, count, children }: { title: string; count: number; child
       </div>
       <div className="panel-body">{children}</div>
     </section>
+  );
+}
+
+function GraphNodeSelect({ value, nodes, onChange }: { value: string; nodes: Graph["nodes"]; onChange: (value: string) => void }) {
+  return (
+    <select value={value} onChange={(event) => onChange(event.target.value)}>
+      <option value="">Выберите блок</option>
+      {nodes.map((node) => <option key={`${node.type}:${node.id}`} value={`${node.type}:${node.id}`}>{node.label} · {node.type}</option>)}
+    </select>
   );
 }
 

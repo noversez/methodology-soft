@@ -338,6 +338,31 @@ h2 {
   font-weight: 700;
 }
 
+.graph-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.graph-toolbar button {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid rgba(23, 32, 27, 0.16);
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.graph-toolbar button.active {
+  background: #22483a;
+  color: #fff;
+}
+
 .panel-body {
   padding: 10px;
   display: grid;
@@ -377,6 +402,36 @@ h2 {
   cursor: pointer;
 }
 
+.row-actions,
+.report-options {
+  display: flex;
+  gap: 8px;
+}
+
+.report-options {
+  padding: 12px 14px 0;
+}
+
+.report-options label {
+  flex: 1;
+  display: grid;
+  gap: 5px;
+  color: #68736d;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.force-button {
+  min-height: 44px;
+  margin: 0 14px 14px;
+  border: 1px solid #9a6b20;
+  border-radius: 8px;
+  background: #fff1d5;
+  color: #6a4616;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 .analysis {
   display: grid;
   grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr);
@@ -391,15 +446,94 @@ h2 {
   background-size: 28px 28px;
 }
 
+.graph-lines {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.graph-lines line {
+  stroke: #577565;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.graph-lines marker path {
+  fill: #577565;
+}
+
+.connect-hint {
+  position: absolute;
+  z-index: 4;
+  top: 12px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  background: #17201b;
+  color: #fff;
+  box-shadow: 0 8px 24px rgba(23, 32, 27, 0.22);
+  transform: translateX(-50%);
+  font-size: 13px;
+}
+
+.connect-hint button {
+  border: 0;
+  background: transparent;
+  color: #c8d5cd;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.edge-list {
+  display: grid;
+  gap: 6px;
+  padding: 10px 14px 14px;
+}
+
+.edge-list div {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: rgba(34, 72, 58, 0.08);
+  font-size: 12px;
+}
+
+.edge-list small {
+  margin-left: auto;
+  color: #68736d;
+}
+
 .node {
   position: absolute;
-  width: min(220px, 38%);
+  z-index: 2;
+  transform: translate(-50%, -50%);
+  width: min(190px, 32%);
   min-height: 74px;
   padding: 12px;
   border: 2px solid #22483a;
   border-radius: 8px;
   background: #ffffff;
   box-shadow: 0 10px 24px rgba(23, 32, 27, 0.12);
+  color: inherit;
+  text-align: left;
+}
+
+.is-connecting .node {
+  cursor: crosshair;
+}
+
+.is-connecting .node:hover,
+.node.is-selected {
+  border-color: #2e65b8;
+  box-shadow: 0 0 0 4px rgba(46, 101, 184, 0.18), 0 10px 24px rgba(23, 32, 27, 0.12);
 }
 
 .node strong,
@@ -416,12 +550,6 @@ h2 {
   color: #68736d;
   font-size: 12px;
 }
-
-.node-0 { left: 7%; top: 12%; }
-.node-1 { right: 10%; top: 18%; border-color: #b74a33; }
-.node-2 { left: 37%; top: 42%; border-color: #2e65b8; }
-.node-3 { left: 12%; bottom: 12%; border-color: #9a6b20; }
-.node-4 { right: 12%; bottom: 16%; border-color: #6a4bb4; }
 
 :root[data-theme="dark"] .node {
   background: #202b25;
