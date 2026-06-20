@@ -1,0 +1,29 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: dims-casebook-holmes
+  datasource:
+    url: ${DIMS_DATABASE_URL:jdbc:h2:mem:dims;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1}
+    username: ${DIMS_DATABASE_USERNAME:sa}
+    password: ${DIMS_DATABASE_PASSWORD:}
+    driver-class-name: ${DIMS_DATABASE_DRIVER:org.h2.Driver}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  servlet:
+    multipart:
+      max-file-size: ${DIMS_FILE_UPLOAD_MAX_MB:20}MB
+      max-request-size: ${DIMS_FILE_UPLOAD_MAX_MB:20}MB
+
+dims:
+  file-upload-max-mb: ${DIMS_FILE_UPLOAD_MAX_MB:20}
+  file-upload-platform-max-mb: 50
+  storage-path: ${DIMS_STORAGE_PATH:./storage}
+  audit-retention-days: 180
