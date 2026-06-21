@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DIMS_DATABASE_NAME:-dims}
+      POSTGRES_USER: ${DIMS_DATABASE_USERNAME:-dims}
+      POSTGRES_PASSWORD: ${DIMS_DATABASE_PASSWORD:-dims}
+    ports:
+      - "${DIMS_POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - dims_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  dims_postgres_data:

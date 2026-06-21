@@ -8,7 +8,6 @@ import {
   CheckCircle2,
   ClipboardList,
   FileText,
-  GitBranch,
   Loader2,
   Moon,
   Plus,
@@ -149,7 +148,6 @@ function App() {
   const [taskDraft, setTaskDraft] = useState<TaskDraft>(emptyTaskDraft);
   const [labDraft, setLabDraft] = useState<LabDraft>(emptyLabDraft);
   const [edgeDraft, setEdgeDraft] = useState<EdgeDraft>(emptyEdgeDraft);
-  const [connectMode, setConnectMode] = useState(false);
   const [connectSelection, setConnectSelection] = useState<string[]>([]);
   const [resultPhoto, setResultPhoto] = useState<File | null>(null);
   const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
@@ -297,33 +295,27 @@ function App() {
     if (activeForm === "edge") setConnectSelection([]);
   }
 
-  function startConnecting() {
-    if ((graph?.nodes.length ?? 0) < 2) {
-      setMessage("Для связи нужны минимум два блока");
-      return;
-    }
-    setConnectSelection([]);
-    setEdgeDraft(emptyEdgeDraft());
-    setConnectMode(true);
-    setMessage("Выберите первый блок на доске");
-  }
-
   function selectGraphNode(node: GraphNode) {
-    if (!connectMode) return;
     const key = nodeKey(node);
     if (!connectSelection.length) {
+      if ((graph?.nodes.length ?? 0) < 2) {
+        setMessage("Для связи нужны минимум два блока");
+        return;
+      }
       setConnectSelection([key]);
+      setEdgeDraft(emptyEdgeDraft());
       setEdgeDraft((draft) => ({ ...draft, source: key }));
       setMessage("Теперь выберите второй блок");
       return;
     }
     if (connectSelection[0] === key) {
-      setMessage("Выберите другой блок");
+      setConnectSelection([]);
+      setEdgeDraft(emptyEdgeDraft());
+      setMessage("Выбор отменен");
       return;
     }
     setConnectSelection([connectSelection[0], key]);
     setEdgeDraft((draft) => ({ ...draft, target: key }));
-    setConnectMode(false);
     setFieldErrors({});
     setActiveForm("edge");
   }
@@ -564,7 +556,6 @@ function App() {
       { label: "Добавить улику", icon: Plus, run: () => Promise.resolve(openForm("evidence")) },
       { label: "Назначить задачу", icon: ClipboardList, run: () => Promise.resolve(openForm("task")) },
       { label: "Запрос в лабораторию", icon: Beaker, run: () => { setLabDraft((draft) => ({ ...draft, evidenceId: draft.evidenceId || firstEvidence?.id || "" })); return Promise.resolve(openForm("lab")); } },
-      { label: "Связать блоки", icon: GitBranch, run: () => Promise.resolve(startConnecting()) },
       { label: "Предпросмотр отчета", icon: FileText, run: () => generateReport(null) },
     ],
     [userId, selectedCaseId, firstEvidence?.id],
@@ -814,17 +805,13 @@ function App() {
           <div className="graph-panel">
             <div className="panel-heading">
               <h2>Граф связей</h2>
-              <div className="graph-toolbar">
-                <span>{graph?.nodes.length ?? 0} узлов · {graph?.edges.length ?? 0} связей</span>
-                <button type="button" onClick={startConnecting} className={connectMode ? "active" : ""}><GitBranch size={15} /> Связать</button>
-              </div>
+              <span>{graph?.nodes.length ?? 0} узлов · {graph?.edges.length ?? 0} связей</span>
             </div>
             {graph?.warning && <div className="warning">{graph.warning}</div>}
-            <div className={`graph-canvas${connectMode ? " is-connecting" : ""}`}>
-              {connectMode ? (
+            <div className={`graph-canvas${connectSelection.length ? " has-selection" : ""}`}>
+              {connectSelection.length ? (
                 <div className="connect-hint">
-                  <strong>{connectSelection.length ? "Выберите второй блок" : "Выберите первый блок"}</strong>
-                  <button type="button" onClick={() => { setConnectMode(false); setConnectSelection([]); setMessage(""); }}>Отмена</button>
+                  <strong>Выберите второй блок · повторный клик отменит выбор</strong>
                 </div>
               ) : null}
               <svg className="graph-lines" viewBox="0 0 1000 430" preserveAspectRatio="none" aria-hidden="true">
