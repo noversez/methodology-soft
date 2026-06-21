@@ -32,6 +32,10 @@ public class Attachment {
     @Column(nullable = false)
     private String sha256;
 
+    private Instant capturedAt;
+    private Double latitude;
+    private Double longitude;
+
     @ManyToOne(optional = false, fetch = FetchType.LAZY)
     private UserAccount uploadedBy;
 
@@ -42,6 +46,10 @@ public class Attachment {
     }
 
     public Attachment(String ownerType, UUID ownerId, String fileName, String mimeType, long sizeBytes, String storagePath, String sha256, UserAccount uploadedBy) {
+        this(ownerType, ownerId, fileName, mimeType, sizeBytes, storagePath, sha256, uploadedBy, null, null, null);
+    }
+
+    public Attachment(String ownerType, UUID ownerId, String fileName, String mimeType, long sizeBytes, String storagePath, String sha256, UserAccount uploadedBy, Instant capturedAt, Double latitude, Double longitude) {
         this.ownerType = ownerType;
         this.ownerId = ownerId;
         this.fileName = fileName;
@@ -50,6 +58,9 @@ public class Attachment {
         this.storagePath = storagePath;
         this.sha256 = sha256;
         this.uploadedBy = uploadedBy;
+        this.capturedAt = capturedAt;
+        this.latitude = latitude;
+        this.longitude = longitude;
     }
 
     public UUID getId() { return id; }
@@ -60,6 +71,9 @@ public class Attachment {
     public long getSizeBytes() { return sizeBytes; }
     public String getStoragePath() { return storagePath; }
     public String getSha256() { return sha256; }
+    public Instant getCapturedAt() { return capturedAt; }
+    public Double getLatitude() { return latitude; }
+    public Double getLongitude() { return longitude; }
     public UserAccount getUploadedBy() { return uploadedBy; }
     public Instant getCreatedAt() { return createdAt; }
 }

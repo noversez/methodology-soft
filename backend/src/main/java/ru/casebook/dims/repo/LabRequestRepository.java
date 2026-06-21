@@ -12,4 +12,5 @@ public interface LabRequestRepository extends JpaRepository<LabRequest, UUID> {
     List<LabRequest> findByEvidenceId(UUID evidenceId);
     List<LabRequest> findByLabAssigneeIdOrderByDesiredDueDateAsc(UUID labAssigneeId);
     boolean existsByEvidenceIdAndStatusNot(UUID evidenceId, LabRequestStatus status);
+    java.util.Optional<LabRequest> findFirstByEvidenceIdAndStatusNot(UUID evidenceId, LabRequestStatus status);
 }

@@ -28,6 +28,7 @@ public final class LabDtos {
     public record LabResponse(
             UUID id,
             UUID caseId,
+            String registrationNumber,
             UUID evidenceId,
             String profile,
             String questions,
@@ -44,6 +45,7 @@ public final class LabDtos {
             return new LabResponse(
                     item.getId(),
                     item.getCaseFile().getId(),
+                    item.getRegistrationNumber(),
                     item.getEvidence().getId(),
                     item.getProfile(),
                     item.getQuestions(),

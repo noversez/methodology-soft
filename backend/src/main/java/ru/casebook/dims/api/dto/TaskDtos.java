@@ -29,8 +29,14 @@ public final class TaskDtos {
             @NotBlank String name,
             @NotBlank String type,
             @NotNull Priority importance,
-            String locationTitle
+            String locationTitle,
+            Double latitude,
+            Double longitude,
+            Instant capturedAt
     ) {
+        public TaskResultEvidenceRequest(String name, String type, Priority importance, String locationTitle) {
+            this(name, type, importance, locationTitle, null, null, null);
+        }
     }
 
     public record TaskResponse(

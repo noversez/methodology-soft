@@ -35,3 +35,4 @@ dims:
   file-upload-platform-max-mb: 50
   storage-path: ${DIMS_STORAGE_PATH:./storage}
   audit-retention-days: 180
+  report-media-memory-limit-mb: ${DIMS_REPORT_MEDIA_MEMORY_LIMIT_MB:20}

@@ -25,6 +25,11 @@ public class LabController {
         return labService.listByEvidence(evidenceId).stream().map(LabResponse::from).toList();
     }
 
+    @GetMapping("/api/cases/{caseId}/lab-requests")
+    public List<LabResponse> listByCase(@PathVariable UUID caseId) {
+        return labService.listByCase(caseId).stream().map(LabResponse::from).toList();
+    }
+
     @GetMapping("/api/lab-requests/{id}")
     public LabResponse get(@PathVariable UUID id) {
         return LabResponse.from(labService.get(id));

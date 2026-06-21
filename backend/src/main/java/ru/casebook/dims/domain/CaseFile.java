@@ -38,6 +38,9 @@ public class CaseFile {
     private long version;
 
     @Column(nullable = false)
+    private long graphRevision;
+
+    @Column(nullable = false)
     private Instant createdAt = Instant.now();
 
     @Column(nullable = false)
@@ -69,6 +72,7 @@ public class CaseFile {
     public String getDescription() { return description; }
     public UserAccount getCreatedBy() { return createdBy; }
     public long getVersion() { return version; }
+    public long getGraphRevision() { return graphRevision; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
 
@@ -79,4 +83,6 @@ public class CaseFile {
         this.status = status;
         this.description = description;
     }
+
+    public void advanceGraphRevision() { graphRevision++; }
 }

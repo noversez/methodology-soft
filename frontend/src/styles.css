@@ -28,6 +28,27 @@
 .login-card h1 { margin: 0; }
 .login-card .form-field { grid-column: 1 / -1; }
 
+.graph-filters {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+
+.graph-filters label { display: grid; gap: 5px; font-size: 12px; }
+.graph-filters input, .graph-filters select { min-width: 150px; }
+
+.html-preview {
+  max-height: 420px;
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid #d7ddd8;
+  border-radius: 12px;
+  background: #fff;
+  color: #17201b;
+}
+
 :root[data-theme="dark"] .login-card { background: #18201d; border-color: #34413b; }
 
 :root[data-theme="dark"] {

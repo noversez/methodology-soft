@@ -108,7 +108,7 @@ public class TaskService {
             return evidenceService.get(task.getResultEvidenceId());
         }
         Evidence created = evidenceService.create(actor, task.getCaseFile().getId(), new EvidenceRequest(
-                request.name(), request.type(), request.importance(), task.getResultText(), Instant.now(), null, null, request.locationTitle()
+                request.name(), request.type(), request.importance(), task.getResultText(), request.capturedAt() == null ? Instant.now() : request.capturedAt(), request.latitude(), request.longitude(), request.locationTitle()
         ));
         task.linkResultEvidence(created.getId());
         auditService.record(actor, "TASK_RESULT_LINKED_TO_EVIDENCE", "Task", task.getId(), "{\"evidenceId\":\"" + created.getId() + "\"}");

@@ -12,7 +12,8 @@ public final class GraphDtos {
     private GraphDtos() {
     }
 
-    public record NodeRef(@NotNull NodeType type, @NotNull UUID id) {
+    public record NodeRef(@NotNull NodeType type, @NotNull UUID id, Long version) {
+        public NodeRef(NodeType type, UUID id) { this(type, id, null); }
     }
 
     public record GraphEdgeRequest(
@@ -21,8 +22,12 @@ public final class GraphDtos {
             @NotBlank String semanticType,
             @NotNull Confidence confidence,
             @NotBlank String hypothesisTitle,
-            @NotBlank String hypothesisText
+            @NotBlank String hypothesisText,
+            Long expectedGraphRevision
     ) {
+        public GraphEdgeRequest(NodeRef source, NodeRef target, String semanticType, Confidence confidence, String hypothesisTitle, String hypothesisText) {
+            this(source, target, semanticType, confidence, hypothesisTitle, hypothesisText, null);
+        }
     }
 
     public record HypothesisRequest(
@@ -32,7 +37,7 @@ public final class GraphDtos {
     ) {
     }
 
-    public record GraphNodeResponse(NodeType type, UUID id, String label, String status) {
+    public record GraphNodeResponse(NodeType type, UUID id, String label, String status, long version) {
     }
 
     public record HypothesisResponse(UUID id, UUID caseId, String title, String text, Confidence confidence, UUID authorId, Instant createdAt) {
@@ -49,6 +54,8 @@ public final class GraphDtos {
             String semanticType,
             Confidence confidence,
             UUID hypothesisId,
+            String hypothesisTitle,
+            String hypothesisText,
             UUID createdBy,
             long version,
             Instant createdAt
@@ -62,6 +69,8 @@ public final class GraphDtos {
                     item.getSemanticType(),
                     item.getConfidence(),
                     item.getHypothesis() == null ? null : item.getHypothesis().getId(),
+                    item.getHypothesis() == null ? null : item.getHypothesis().getTitle(),
+                    item.getHypothesis() == null ? null : item.getHypothesis().getText(),
                     item.getCreatedBy().getId(),
                     item.getVersion(),
                     item.getCreatedAt()
@@ -69,6 +78,6 @@ public final class GraphDtos {
         }
     }
 
-    public record GraphResponse(List<GraphNodeResponse> nodes, List<GraphEdgeResponse> edges, boolean filtered, String warning) {
+    public record GraphResponse(List<GraphNodeResponse> nodes, List<GraphEdgeResponse> edges, boolean filtered, String warning, long graphRevision) {
     }
 }

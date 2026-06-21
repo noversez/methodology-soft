@@ -42,12 +42,14 @@ public class EvidenceService {
     public Evidence create(UserAccount actor, UUID caseId, EvidenceRequest request) {
         currentUserService.requireAnyRole(actor, Role.DETECTIVE, Role.ASSISTANT, Role.INSPECTOR, Role.AGENT);
         CaseFile caseFile = cases.findById(caseId).orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "CASE_NOT_FOUND", "Дело не найдено"));
+        if (caseFile.getStatus() == CaseStatus.CLOSED) {
+            throw new ApiException(HttpStatus.CONFLICT, "CASE_NOT_ACTIVE", "Нельзя добавлять улики в закрытое дело");
+        }
         String year = String.valueOf(request.discoveryDateTime().atZone(ZoneOffset.UTC).getYear());
         String prefix = "EV-" + year + "-";
-        long next = evidence.countByRegistrationNumberStartingWith(prefix) + 1;
         Evidence created = evidence.save(new Evidence(
                 caseFile,
-                prefix + String.format("%03d", next),
+                prefix + UUID.randomUUID().toString().substring(0, 8).toUpperCase(),
                 request.name(),
                 request.type(),
                 request.importance(),
@@ -67,6 +69,9 @@ public class EvidenceService {
     public Evidence update(UserAccount actor, UUID id, EvidenceRequest request) {
         currentUserService.requireAnyRole(actor, Role.DETECTIVE, Role.ASSISTANT, Role.INSPECTOR);
         Evidence item = get(id);
+        if (item.getStatus() == EvidenceStatus.UNDER_EXAMINATION) {
+            throw new ApiException(HttpStatus.CONFLICT, "EVIDENCE_LOCKED_FOR_EXAMINATION", "Улика заблокирована на время лабораторной экспертизы");
+        }
         String oldDescription = item.getDescription();
         item.update(request.name(), request.type(), request.importance(), request.description(), request.discoveryDateTime(), request.latitude(), request.longitude(), request.locationTitle());
         if (!oldDescription.equals(request.description())) {

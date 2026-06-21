@@ -8,6 +8,7 @@ public class DimsProperties {
     private int fileUploadPlatformMaxMb = 50;
     private String storagePath = "./storage";
     private int auditRetentionDays = 180;
+    private int reportMediaMemoryLimitMb = 20;
 
     public int getFileUploadMaxMb() {
         return fileUploadMaxMb;
@@ -40,4 +41,7 @@ public class DimsProperties {
     public void setAuditRetentionDays(int auditRetentionDays) {
         this.auditRetentionDays = auditRetentionDays;
     }
+
+    public int getReportMediaMemoryLimitMb() { return reportMediaMemoryLimitMb; }
+    public void setReportMediaMemoryLimitMb(int reportMediaMemoryLimitMb) { this.reportMediaMemoryLimitMb = reportMediaMemoryLimitMb; }
 }

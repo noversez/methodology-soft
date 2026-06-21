@@ -25,19 +25,21 @@ type User = { id: string; login: string; role: Role; displayName: string };
 type AuthResponse = { user: User; token?: string };
 type CaseFile = { id: string; registrationNumber: string; title: string; openedAt: string; priority: string; status: string; description: string };
 type IncidentScene = { id: string; caseId: string; title: string; description: string; address: string; latitude?: number; longitude?: number; createdAt: string };
+type Interview = { id: string; caseId: string; interviewee: string; occurredAt: string; protocolText: string; createdAt: string };
 type Evidence = { id: string; caseId: string; registrationNumber: string; name: string; type: string; importance: string; description: string; discoveryDateTime: string; latitude?: number; longitude?: number; locationTitle?: string; status: string };
 type TaskItem = { id: string; caseId: string; title: string; description: string; assigneeId: string; priority: string; deadline: string; status: string; resultText?: string; resultEvidenceId?: string };
-type LabRequest = { id: string; evidenceId: string; profile: string; questions: string; desiredDueDate: string; status: string; requesterId: string; labAssigneeId?: string; resultText?: string };
-type Graph = { nodes: { type: string; id: string; label: string; status: string }[]; edges: { id: string; source: { type: string; id: string }; target: { type: string; id: string }; semanticType: string; confidence: string }[]; filtered: boolean; warning?: string };
+type LabRequest = { id: string; caseId: string; registrationNumber: string; evidenceId: string; profile: string; questions: string; desiredDueDate: string; status: string; requesterId: string; labAssigneeId?: string; resultText?: string };
+type Graph = { nodes: { type: string; id: string; label: string; status: string; version: number }[]; edges: { id: string; source: { type: string; id: string }; target: { type: string; id: string }; semanticType: string; confidence: string; hypothesisTitle?: string; hypothesisText?: string }[]; filtered: boolean; warning?: string; graphRevision: number };
 type ReportPreview = { content: string; hasOpenLabRequests: boolean; warning?: string };
-type ReportFile = { id: string; registrationNumber: string; status: string };
-type FormKind = "case" | "scene" | "evidence" | "task" | "lab" | "labResult" | "edge" | "agentResult";
+type ReportFile = { id: string; registrationNumber: string; status: string; format: string };
+type FormKind = "case" | "scene" | "interview" | "evidence" | "task" | "lab" | "labResult" | "edge" | "agentResult";
 type FieldErrors = Record<string, string>;
 type ApiErrorBody = { code?: string; message?: string; details?: Record<string, unknown> };
 type CaseDraft = { title: string; openedAt: string; priority: string; description: string };
 type SceneDraft = { title: string; description: string; address: string; latitude: string; longitude: string };
+type InterviewDraft = { interviewee: string; occurredAt: string; protocolText: string };
 type EvidenceDraft = { name: string; type: string; importance: string; description: string; discoveryDateTime: string; locationTitle: string; latitude: string; longitude: string };
-type AgentResultDraft = { taskId: string; note: string; evidenceName: string; evidenceType: string; locationTitle: string };
+type AgentResultDraft = { taskId: string; note: string; evidenceName: string; evidenceType: string; locationTitle: string; latitude: string; longitude: string; capturedAt: string };
 type TaskDraft = { title: string; description: string; assigneeId: string; priority: string; deadline: string };
 type LabDraft = { evidenceId: string; profile: string; questions: string; desiredDueDate: string };
 type EdgeDraft = { source: string; target: string; semanticType: string; confidence: string; hypothesisTitle: string; hypothesisText: string };
@@ -50,6 +52,7 @@ const emptyCaseDraft = (): CaseDraft => ({
   description: "",
 });
 const emptySceneDraft = (): SceneDraft => ({ title: "", description: "", address: "", latitude: "", longitude: "" });
+const emptyInterviewDraft = (): InterviewDraft => ({ interviewee: "", occurredAt: new Date().toISOString().slice(0, 16), protocolText: "" });
 
 const emptyEvidenceDraft = (): EvidenceDraft => ({
   name: "",
@@ -61,7 +64,7 @@ const emptyEvidenceDraft = (): EvidenceDraft => ({
   latitude: "",
   longitude: "",
 });
-const emptyAgentResultDraft = (): AgentResultDraft => ({ taskId: "", note: "", evidenceName: "", evidenceType: "цифровая", locationTitle: "" });
+const emptyAgentResultDraft = (): AgentResultDraft => ({ taskId: "", note: "", evidenceName: "", evidenceType: "цифровая", locationTitle: "", latitude: "", longitude: "", capturedAt: new Date().toISOString() });
 const futureDate = (days: number) => new Date(Date.now() + days * 86400000).toISOString().slice(0, 16);
 const emptyTaskDraft = (): TaskDraft => ({ title: "", description: "", assigneeId: "", priority: "MEDIUM", deadline: futureDate(1) });
 const emptyLabDraft = (): LabDraft => ({ evidenceId: "", profile: "", questions: "", desiredDueDate: futureDate(2) });
@@ -129,6 +132,21 @@ async function request<T>(path: string, userId?: string, init: RequestInit = {})
   throw new ApiRequestError(NETWORK_MESSAGE, "NETWORK_ERROR");
 }
 
+async function uploadFile<T>(path: string, token: string, file: File, metadata: { capturedAt?: string; latitude?: string; longitude?: string } = {}): Promise<T> {
+  const form = new FormData();
+  form.append("file", file);
+  const params = new URLSearchParams();
+  if (metadata.capturedAt) params.set("capturedAt", metadata.capturedAt);
+  if (metadata.latitude) params.set("latitude", metadata.latitude);
+  if (metadata.longitude) params.set("longitude", metadata.longitude);
+  const response = await fetch(`${API}${path}?${params}`, { method: "POST", headers: { "X-User-Id": token }, body: form, signal: AbortSignal.timeout(15000) });
+  if (!response.ok) {
+    const error: ApiErrorBody = await response.json().catch(() => ({ message: "Ошибка загрузки файла" }));
+    throw new ApiRequestError(error.message ?? "Ошибка загрузки файла", error.code, error.details);
+  }
+  return response.json();
+}
+
 function App() {
   const [users, setUsers] = useState<User[]>([]);
   const [userId, setUserId] = useState("");
@@ -139,19 +157,24 @@ function App() {
   const [selectedCaseId, setSelectedCaseId] = useState("");
   const [evidence, setEvidence] = useState<Evidence[]>([]);
   const [scenes, setScenes] = useState<IncidentScene[]>([]);
+  const [interviews, setInterviews] = useState<Interview[]>([]);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [myTasks, setMyTasks] = useState<TaskItem[]>([]);
   const [labs, setLabs] = useState<LabRequest[]>([]);
   const [labQueue, setLabQueue] = useState<LabRequest[]>([]);
   const [graph, setGraph] = useState<Graph | null>(null);
+  const [graphTypeFilter, setGraphTypeFilter] = useState("ALL");
+  const [graphQuery, setGraphQuery] = useState("");
   const [preview, setPreview] = useState<ReportPreview | null>(null);
   const [approvedReport, setApprovedReport] = useState<ReportFile | null>(null);
   const [reportTemplate, setReportTemplate] = useState("FULL");
+  const [reportFormat, setReportFormat] = useState("TEXT");
   const [message, setMessage] = useState("");
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [activeForm, setActiveForm] = useState<FormKind | null>(null);
   const [caseDraft, setCaseDraft] = useState<CaseDraft>(() => loadDrafts().caseDraft);
   const [sceneDraft, setSceneDraft] = useState<SceneDraft>(emptySceneDraft);
+  const [interviewDraft, setInterviewDraft] = useState<InterviewDraft>(emptyInterviewDraft);
   const [evidenceDraft, setEvidenceDraft] = useState<EvidenceDraft>(() => loadDrafts().evidenceDraft);
   const [agentResultDraft, setAgentResultDraft] = useState<AgentResultDraft>(() => loadDrafts().agentResultDraft);
   const [taskDraft, setTaskDraft] = useState<TaskDraft>(emptyTaskDraft);
@@ -161,8 +184,10 @@ function App() {
   const [resultPhoto, setResultPhoto] = useState<File | null>(null);
   const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
   const [activeLabId, setActiveLabId] = useState("");
+  const [duplicateLabId, setDuplicateLabId] = useState("");
   const [labResultText, setLabResultText] = useState("");
   const [editingTaskId, setEditingTaskId] = useState("");
+  const [editingEvidenceId, setEditingEvidenceId] = useState("");
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [isOnline, setIsOnline] = useState(() => navigator.onLine);
   const [isPending, startTransition] = useTransition();
@@ -171,6 +196,14 @@ function App() {
   const firstEvidence = evidence[0];
   const visibleTasks = currentUser?.role === "AGENT" || currentUser?.role === "ASSISTANT" ? myTasks : tasks;
   const visibleLabs = currentUser?.role === "LAB_ANALYST" ? labQueue : labs;
+  const visibleGraphNodes = useMemo(() => {
+    const query = graphQuery.trim().toLocaleLowerCase("ru-RU");
+    return (graph?.nodes ?? []).filter((node) => (graphTypeFilter === "ALL" || node.type === graphTypeFilter) && (!query || node.label.toLocaleLowerCase("ru-RU").includes(query)));
+  }, [graph, graphTypeFilter, graphQuery]);
+  const visibleGraphEdges = useMemo(() => {
+    const keys = new Set(visibleGraphNodes.map(nodeKey));
+    return (graph?.edges ?? []).filter((edge) => keys.has(nodeKey(edge.source)) && keys.has(nodeKey(edge.target)));
+  }, [graph, visibleGraphNodes]);
 
   async function loadBase() {
     const [loadedUsers, loadedCases] = await Promise.all([
@@ -183,21 +216,20 @@ function App() {
   }
 
   async function loadCaseDetails(caseId: string) {
-    const [loadedEvidence, loadedTasks, loadedGraph, loadedScenes] = await Promise.all([
+    const [loadedEvidence, loadedTasks, loadedGraph, loadedScenes, loadedLabs, loadedInterviews] = await Promise.all([
       request<Evidence[]>(`/cases/${caseId}/evidence`),
       request<TaskItem[]>(`/cases/${caseId}/tasks`),
       request<Graph>(`/cases/${caseId}/graph`),
       request<IncidentScene[]>(`/cases/${caseId}/scenes`),
+      request<LabRequest[]>(`/cases/${caseId}/lab-requests`),
+      request<Interview[]>(`/cases/${caseId}/interviews`),
     ]);
     setEvidence(loadedEvidence);
     setTasks(loadedTasks);
     setGraph(loadedGraph);
     setScenes(loadedScenes);
-    if (loadedEvidence[0]) {
-      setLabs(await request<LabRequest[]>(`/evidence/${loadedEvidence[0].id}/lab-requests`));
-    } else {
-      setLabs([]);
-    }
+    setLabs(loadedLabs);
+    setInterviews(loadedInterviews);
   }
 
   async function authenticate(event: React.FormEvent) {
@@ -277,8 +309,9 @@ function App() {
 
   async function createEvidence(draft: EvidenceDraft) {
     if (!userId || !selectedCaseId) return;
-    const created = await request<Evidence>(`/cases/${selectedCaseId}/evidence`, userId, {
-      method: "POST",
+    const isEditing = Boolean(editingEvidenceId);
+    const created = await request<Evidence>(editingEvidenceId ? `/evidence/${editingEvidenceId}` : `/cases/${selectedCaseId}/evidence`, userId, {
+      method: editingEvidenceId ? "PATCH" : "POST",
       body: JSON.stringify({
         ...draft,
         name: draft.name.trim(),
@@ -291,16 +324,14 @@ function App() {
       }),
     });
     if (evidenceFile) {
-      await request(`/evidence/${created.id}/attachments`, userId, {
-        method: "POST",
-        body: JSON.stringify({ fileName: evidenceFile.name, mimeType: evidenceFile.type || "application/octet-stream", sizeBytes: evidenceFile.size }),
-      });
+      await uploadFile(`/evidence/${created.id}/attachments`, userId, evidenceFile, { capturedAt: new Date(evidenceFile.lastModified).toISOString(), latitude: draft.latitude, longitude: draft.longitude });
     }
-    setEvidence((items) => [created, ...items]);
+    setEvidence((items) => editingEvidenceId ? items.map((item) => item.id === created.id ? created : item) : [created, ...items]);
     setEvidenceDraft(emptyEvidenceDraft());
     setEvidenceFile(null);
+    setEditingEvidenceId("");
     setActiveForm(null);
-    setMessage(`Добавлена улика ${created.registrationNumber}`);
+    setMessage(isEditing ? `Улика ${created.registrationNumber} обновлена, версия сохранена` : `Добавлена улика ${created.registrationNumber}`);
     await loadCaseDetails(selectedCaseId);
   }
 
@@ -313,6 +344,8 @@ function App() {
     setFieldErrors({});
     if (activeForm === "case") setCaseDraft(emptyCaseDraft());
     if (activeForm === "scene") setSceneDraft(emptySceneDraft());
+    if (activeForm === "interview") setInterviewDraft(emptyInterviewDraft());
+    if (activeForm === "evidence") { setEvidenceDraft(emptyEvidenceDraft()); setEvidenceFile(null); setEditingEvidenceId(""); }
     setActiveForm(null);
     if (activeForm === "edge") setConnectSelection([]);
   }
@@ -347,10 +380,37 @@ function App() {
     setAgentResultDraft((draft) => ({ ...draft, taskId: task.id, evidenceName: draft.taskId === task.id ? draft.evidenceName : task.title }));
     setResultPhoto(null);
     setActiveForm("agentResult");
+    captureAgentLocation();
+  }
+
+  function captureAgentLocation() {
+    if (!navigator.geolocation) { setMessage("Геолокация не поддерживается устройством"); return; }
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => setAgentResultDraft((draft) => ({ ...draft, latitude: String(coords.latitude), longitude: String(coords.longitude), capturedAt: new Date().toISOString() })),
+      () => setMessage("GPS недоступен: разрешите доступ к геолокации или введите место вручную"),
+      { enableHighAccuracy: true, timeout: 10000 },
+    );
+  }
+
+  function editEvidence(item: Evidence) {
+    setEditingEvidenceId(item.id);
+    setEvidenceDraft({ name: item.name, type: item.type, importance: item.importance, description: item.description, discoveryDateTime: new Date(item.discoveryDateTime).toISOString().slice(0, 16), locationTitle: item.locationTitle ?? "", latitude: item.latitude?.toString() ?? "", longitude: item.longitude?.toString() ?? "" });
+    setEvidenceFile(null);
+    openForm("evidence");
   }
 
   function handleFormError(error: unknown) {
     if (error instanceof ApiRequestError) {
+      if (error.code === "ACTIVE_LAB_REQUEST_EXISTS" && typeof error.details.activeLabRequestId === "string") {
+        setDuplicateLabId(error.details.activeLabRequestId);
+        setActiveForm(null);
+        if (selectedCaseId) void loadCaseDetails(selectedCaseId).catch(() => undefined);
+      }
+      if (error.code === "GRAPH_STALE") {
+        setActiveForm(null);
+        setConnectSelection([]);
+        if (selectedCaseId) void loadCaseDetails(selectedCaseId).catch(() => undefined);
+      }
       const errors = Object.fromEntries(Object.entries(error.details).filter(([, value]) => typeof value === "string")) as FieldErrors;
       setFieldErrors(errors);
       setMessage(error.message);
@@ -389,6 +449,14 @@ function App() {
     });
   }
 
+  function submitInterview(event: React.FormEvent) {
+    event.preventDefault();
+    const errors = { interviewee: required(interviewDraft.interviewee, "Опрашиваемый"), occurredAt: required(interviewDraft.occurredAt, "Дата"), protocolText: required(interviewDraft.protocolText, "Протокол") };
+    const visibleErrors = Object.fromEntries(Object.entries(errors).filter(([, value]) => value)); setFieldErrors(visibleErrors);
+    if (Object.keys(visibleErrors).length || !selectedCaseId || !userId) return;
+    startTransition(async () => { try { const created=await request<Interview>(`/cases/${selectedCaseId}/interviews`,userId,{method:"POST",body:JSON.stringify({...interviewDraft,occurredAt:new Date(interviewDraft.occurredAt).toISOString()})}); setInterviews((items)=>[...items,created]); setInterviewDraft(emptyInterviewDraft()); setActiveForm(null); setMessage("Протокол интервью сохранен"); } catch(error){handleFormError(error);} });
+  }
+
   function submitEvidence(event: React.FormEvent) {
     event.preventDefault();
     const errors = {
@@ -411,25 +479,21 @@ function App() {
       evidenceName: required(agentResultDraft.evidenceName, "Название улики"),
       evidenceType: required(agentResultDraft.evidenceType, "Тип улики"),
     };
+    if (resultPhoto && resultPhoto.size > 20 * 1024 * 1024) errors.note = "Фото превышает лимит 20 МБ";
     const visibleErrors = Object.fromEntries(Object.entries(errors).filter(([, value]) => value));
     setFieldErrors(visibleErrors);
     if (Object.keys(visibleErrors).length || !userId) return;
     startTransition(async () => {
       try {
-        if (resultPhoto) {
-          await request(`/tasks/${agentResultDraft.taskId}/attachments`, userId, {
-            method: "POST",
-            body: JSON.stringify({ fileName: resultPhoto.name, mimeType: resultPhoto.type || "application/octet-stream", sizeBytes: resultPhoto.size }),
-          });
-        }
         await request<TaskItem>(`/tasks/${agentResultDraft.taskId}/status`, userId, {
           method: "PATCH",
           body: JSON.stringify({ status: "DONE", resultText: agentResultDraft.note.trim() }),
         });
-        await request<Evidence>(`/tasks/${agentResultDraft.taskId}/result/evidence`, userId, {
+        const createdEvidence = await request<Evidence>(`/tasks/${agentResultDraft.taskId}/result/evidence`, userId, {
           method: "POST",
-          body: JSON.stringify({ name: agentResultDraft.evidenceName.trim(), type: agentResultDraft.evidenceType.trim(), importance: "MEDIUM", locationTitle: agentResultDraft.locationTitle.trim() || null }),
+          body: JSON.stringify({ name: agentResultDraft.evidenceName.trim(), type: agentResultDraft.evidenceType.trim(), importance: "MEDIUM", locationTitle: agentResultDraft.locationTitle.trim() || null, latitude: agentResultDraft.latitude ? Number(agentResultDraft.latitude) : null, longitude: agentResultDraft.longitude ? Number(agentResultDraft.longitude) : null, capturedAt: agentResultDraft.capturedAt }),
         });
+        if (resultPhoto) await uploadFile(`/evidence/${createdEvidence.id}/attachments`, userId, resultPhoto, agentResultDraft);
         setMyTasks((items) => items.map((item) => item.id === agentResultDraft.taskId ? { ...item, status: "DONE", resultText: agentResultDraft.note } : item));
         setAgentResultDraft(emptyAgentResultDraft());
         setResultPhoto(null);
@@ -537,24 +601,28 @@ function App() {
       }),
     });
     setLabs((items) => [created, ...items]);
+    setDuplicateLabId("");
     setLabDraft(emptyLabDraft());
     setActiveForm(null);
     setMessage("Лабораторный запрос направлен");
   }
 
   async function createGraphEdge() {
-    if (!userId || !selectedCase) return;
+    if (!userId || !selectedCase || !graph) return;
     const [sourceType, sourceId] = edgeDraft.source.split(":");
     const [targetType, targetId] = edgeDraft.target.split(":");
+    const sourceNode = graph.nodes.find((node) => node.type === sourceType && node.id === sourceId);
+    const targetNode = graph.nodes.find((node) => node.type === targetType && node.id === targetId);
     await request(`/cases/${selectedCase.id}/graph/edges`, userId, {
       method: "POST",
       body: JSON.stringify({
-        source: { type: sourceType, id: sourceId },
-        target: { type: targetType, id: targetId },
+        source: { type: sourceType, id: sourceId, version: sourceNode?.version },
+        target: { type: targetType, id: targetId, version: targetNode?.version },
         semanticType: edgeDraft.semanticType.trim(),
         confidence: edgeDraft.confidence,
         hypothesisTitle: edgeDraft.hypothesisTitle.trim(),
         hypothesisText: edgeDraft.hypothesisText.trim(),
+        expectedGraphRevision: graph.graphRevision,
       }),
     });
     setEdgeDraft(emptyEdgeDraft());
@@ -564,27 +632,32 @@ function App() {
     await loadCaseDetails(selectedCase.id);
   }
 
+  function createTaskFromHypothesis(edge: Graph["edges"][number]) {
+    setTaskDraft({ ...emptyTaskDraft(), title: `Проверить гипотезу: ${edge.hypothesisTitle ?? edge.semanticType}`, description: edge.hypothesisText ?? `Проверить связь «${edge.semanticType}»` });
+    openForm("task");
+  }
+
   async function generateReport(force: boolean | null = null) {
     if (!userId || !selectedCaseId) return;
     if (force === null) {
-      const data = await request<ReportPreview>(`/cases/${selectedCaseId}/reports/preview?template=${reportTemplate}`, userId, { method: "POST" });
+      const data = await request<ReportPreview>(`/cases/${selectedCaseId}/reports/preview?template=${reportTemplate}&format=${reportFormat}`, userId, { method: "POST" });
       setPreview(data);
       setMessage(data.warning ?? "Предпросмотр отчета готов");
       return;
     }
-    const report = await request<ReportFile>(`/cases/${selectedCaseId}/reports?force=${force}&template=${reportTemplate}`, userId, { method: "POST" });
+    const report = await request<ReportFile>(`/cases/${selectedCaseId}/reports?force=${force}&template=${reportTemplate}&format=${reportFormat}`, userId, { method: "POST" });
     setApprovedReport(report);
     setMessage(`Отчет ${report.registrationNumber} утвержден и сохранен`);
   }
 
   async function downloadReport() {
     if (!approvedReport) return;
-    const response = await fetch(`${API}/reports/${approvedReport.id}/download`);
+    const response = await fetch(`${API}/reports/${approvedReport.id}/download`, { headers: { "X-User-Id": userId } });
     if (!response.ok) throw new Error("Не удалось скачать отчет");
     const url = URL.createObjectURL(await response.blob());
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${approvedReport.registrationNumber}.txt`;
+    link.download = `${approvedReport.registrationNumber}.${approvedReport.format === "HTML" ? "html" : "txt"}`;
     link.click();
     URL.revokeObjectURL(url);
   }
@@ -593,12 +666,13 @@ function App() {
     () => [
       { label: "Создать дело", icon: BookOpen, run: () => Promise.resolve(openForm("case")) },
       { label: "Место происшествия", icon: RadioTower, run: () => Promise.resolve(openForm("scene")) },
+      { label: "Добавить интервью", icon: ClipboardList, run: () => Promise.resolve(openForm("interview")) },
       { label: "Добавить улику", icon: Plus, run: () => Promise.resolve(openForm("evidence")) },
       { label: "Назначить задачу", icon: ClipboardList, run: () => Promise.resolve(openForm("task")) },
       { label: "Запрос в лабораторию", icon: Beaker, run: () => { setLabDraft((draft) => ({ ...draft, evidenceId: draft.evidenceId || firstEvidence?.id || "" })); return Promise.resolve(openForm("lab")); } },
       { label: "Предпросмотр отчета", icon: FileText, run: () => generateReport(null) },
     ],
-    [userId, selectedCaseId, firstEvidence?.id],
+    [userId, selectedCaseId, firstEvidence?.id, reportTemplate, reportFormat],
   );
 
   if (!currentUser) {
@@ -673,7 +747,7 @@ function App() {
           </button>
         </section>
 
-        {message && <div className="notice">{message}</div>}
+        {message && <div className="notice">{message}{duplicateLabId ? <button className="result-action" onClick={() => document.getElementById(`lab-${duplicateLabId}`)?.scrollIntoView({ behavior: "smooth", block: "center" })}>Перейти к активному запросу</button> : null}</div>}
         {!isOnline ? <div className="warning" role="alert">{NETWORK_MESSAGE}</div> : null}
 
         {activeForm === "case" ? (
@@ -711,8 +785,19 @@ function App() {
           </FormDialog>
         ) : null}
 
+        {activeForm === "interview" ? (
+          <FormDialog title="Протокол интервью" onClose={closeForm}>
+            <form className="entity-form" onSubmit={submitInterview} noValidate>
+              <FormField label="Опрашиваемый" error={fieldErrors.interviewee}><input value={interviewDraft.interviewee} onChange={(event)=>setInterviewDraft((draft)=>({...draft,interviewee:event.target.value}))} autoFocus /></FormField>
+              <FormField label="Дата и время" error={fieldErrors.occurredAt}><input type="datetime-local" value={interviewDraft.occurredAt} onChange={(event)=>setInterviewDraft((draft)=>({...draft,occurredAt:event.target.value}))} /></FormField>
+              <FormField label="Протокол" error={fieldErrors.protocolText} wide><textarea rows={8} value={interviewDraft.protocolText} onChange={(event)=>setInterviewDraft((draft)=>({...draft,protocolText:event.target.value}))} /></FormField>
+              <FormActions pending={isPending} onCancel={closeForm} />
+            </form>
+          </FormDialog>
+        ) : null}
+
         {activeForm === "evidence" ? (
-          <FormDialog title="Новая улика" onClose={closeForm}>
+          <FormDialog title={editingEvidenceId ? "Изменить улику" : "Новая улика"} onClose={closeForm}>
             <form className="entity-form" onSubmit={submitEvidence} noValidate>
               <FormField label="Название" error={fieldErrors.name}>
                 <input value={evidenceDraft.name} onChange={(event) => setEvidenceDraft((draft) => ({ ...draft, name: event.target.value }))} autoFocus />
@@ -760,9 +845,11 @@ function App() {
         {activeForm === "lab" ? (
           <FormDialog title="Запрос на экспертизу" onClose={closeForm}>
             <form className="entity-form" onSubmit={submitLab} noValidate>
+              <FormField label="Дело"><input value={selectedCase ? `${selectedCase.registrationNumber} · ${selectedCase.title}` : ""} readOnly /></FormField>
               <FormField label="Улика" error={fieldErrors.evidenceId}><select value={labDraft.evidenceId} onChange={(event) => setLabDraft((draft) => ({ ...draft, evidenceId: event.target.value }))}><option value="">Выберите</option>{evidence.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></FormField>
+              <FormField label="Данные улики" wide><input value={evidence.find((item) => item.id === labDraft.evidenceId)?.description ?? "Выберите улику"} readOnly /></FormField>
               <FormField label="Профиль экспертизы" error={fieldErrors.profile}><input value={labDraft.profile} onChange={(event) => setLabDraft((draft) => ({ ...draft, profile: event.target.value }))} autoFocus /></FormField>
-              <FormField label="Желаемый срок" error={fieldErrors.desiredDueDate}><input type="datetime-local" value={labDraft.desiredDueDate} onChange={(event) => setLabDraft((draft) => ({ ...draft, desiredDueDate: event.target.value }))} /></FormField>
+              <FormField label="Желаемый срок" error={fieldErrors.desiredDueDate}><input type="datetime-local" min={new Date().toISOString().slice(0, 16)} value={labDraft.desiredDueDate} onChange={(event) => setLabDraft((draft) => ({ ...draft, desiredDueDate: event.target.value }))} /></FormField>
               <FormField label="Вопросы эксперту" error={fieldErrors.questions} wide><textarea rows={4} value={labDraft.questions} onChange={(event) => setLabDraft((draft) => ({ ...draft, questions: event.target.value }))} /></FormField>
               <FormActions pending={isPending} onCancel={closeForm} />
             </form>
@@ -812,6 +899,9 @@ function App() {
               <FormField label="Место" wide>
                 <input value={agentResultDraft.locationTitle} onChange={(event) => setAgentResultDraft((draft) => ({ ...draft, locationTitle: event.target.value }))} />
               </FormField>
+              <FormField label="GPS-координаты" wide>
+                <div className="row-actions"><span>{agentResultDraft.latitude && agentResultDraft.longitude ? `${agentResultDraft.latitude}, ${agentResultDraft.longitude}` : "Ожидание координат"}</span><button type="button" className="result-action" onClick={captureAgentLocation}>Получить GPS</button></div>
+              </FormField>
               <FormActions pending={isPending} onCancel={closeForm} />
             </form>
           </FormDialog>
@@ -831,11 +921,15 @@ function App() {
               <article className="row" key={item.id}>
                 <strong>{item.name}</strong>
                 <span>{item.type} · {item.status}</span>
+                {currentUser?.role === "DETECTIVE" || currentUser?.role === "ASSISTANT" || currentUser?.role === "INSPECTOR" ? <button className="result-action" onClick={() => editEvidence(item)}>Изменить</button> : null}
               </article>
             ))}
           </Panel>
           <Panel title="Места происшествия" count={scenes.length}>
             {scenes.map((item) => <article className="row" key={item.id}><strong>{item.title}</strong><span>{item.address}</span></article>)}
+          </Panel>
+          <Panel title="Интервью" count={interviews.length}>
+            {interviews.map((item)=><article className="row" key={item.id}><strong>{item.interviewee}</strong><span>{new Date(item.occurredAt).toLocaleString("ru-RU")}</span><small>{item.protocolText}</small></article>)}
           </Panel>
           <Panel title={currentUser?.role === "AGENT" || currentUser?.role === "ASSISTANT" ? "Мои задачи" : "Задачи"} count={visibleTasks.length}>
             {visibleTasks.map((item) => (
@@ -854,8 +948,8 @@ function App() {
           </Panel>
           <Panel title={currentUser?.role === "LAB_ANALYST" ? "Моя очередь" : "Лаборатория"} count={visibleLabs.length}>
             {visibleLabs.map((item) => (
-              <article className="row" key={item.id}>
-                <strong>{item.profile}</strong>
+              <article className="row" id={`lab-${item.id}`} key={item.id}>
+                <strong>{item.registrationNumber} · {item.profile}</strong>
                 <span>{item.status} · до {new Date(item.desiredDueDate).toLocaleDateString("ru-RU")}</span>
                 {currentUser?.role === "LAB_ANALYST" && item.status === "CREATED" ? <button className="result-action" onClick={() => startTransition(() => changeLabStatus(item.id).catch(handleFormError))}>Принять в работу</button> : null}
                 {currentUser?.role === "LAB_ANALYST" && item.status !== "COMPLETED" ? <button className="result-action" onClick={() => { setActiveLabId(item.id); setFieldErrors({}); setActiveForm("labResult"); }}>Внести заключение</button> : null}
@@ -868,9 +962,14 @@ function App() {
           <div className="graph-panel">
             <div className="panel-heading">
               <h2>Граф связей</h2>
-              <span>{graph?.nodes.length ?? 0} узлов · {graph?.edges.length ?? 0} связей</span>
+              <span>{visibleGraphNodes.length}/{graph?.nodes.length ?? 0} узлов · {visibleGraphEdges.length} связей</span>
             </div>
             {graph?.warning && <div className="warning">{graph.warning}</div>}
+            <div className="graph-filters">
+              <label>Ветка<select value={graphTypeFilter} onChange={(event) => setGraphTypeFilter(event.target.value)}><option value="ALL">Все сущности</option>{Array.from(new Set((graph?.nodes ?? []).map((node) => node.type))).map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
+              <label>Поиск<input value={graphQuery} onChange={(event) => setGraphQuery(event.target.value)} placeholder="Название узла" /></label>
+              <button type="button" className="result-action" onClick={() => { setGraphTypeFilter("ALL"); setGraphQuery(""); }}>Сбросить</button>
+            </div>
             <div className={`graph-canvas${connectSelection.length ? " has-selection" : ""}`}>
               {connectSelection.length ? (
                 <div className="connect-hint">
@@ -879,16 +978,16 @@ function App() {
               ) : null}
               <svg className="graph-lines" viewBox="0 0 1000 430" preserveAspectRatio="none" aria-hidden="true">
                 <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" /></marker></defs>
-                {graph?.edges.map((edge) => {
-                  const sourceIndex = graph.nodes.findIndex((node) => nodeKey(node) === nodeKey(edge.source));
-                  const targetIndex = graph.nodes.findIndex((node) => nodeKey(node) === nodeKey(edge.target));
+                {visibleGraphEdges.map((edge) => {
+                  const sourceIndex = visibleGraphNodes.findIndex((node) => nodeKey(node) === nodeKey(edge.source));
+                  const targetIndex = visibleGraphNodes.findIndex((node) => nodeKey(node) === nodeKey(edge.target));
                   if (sourceIndex < 0 || targetIndex < 0) return null;
                   const source = nodePoint(sourceIndex);
                   const target = nodePoint(targetIndex);
                   return <line key={edge.id} x1={source.x} y1={source.y} x2={target.x} y2={target.y} markerEnd="url(#arrow)" />;
                 })}
               </svg>
-              {graph?.nodes.map((node, index) => (
+              {visibleGraphNodes.map((node, index) => (
                 <button
                   type="button"
                   className={`node${connectSelection.includes(nodeKey(node)) ? " is-selected" : ""}`}
@@ -903,10 +1002,10 @@ function App() {
               ))}
             </div>
             <div className="edge-list">
-              {graph?.edges.map((edge) => {
-                const source = graph.nodes.find((node) => node.type === edge.source.type && node.id === edge.source.id);
-                const target = graph.nodes.find((node) => node.type === edge.target.type && node.id === edge.target.id);
-                return <div key={edge.id}><strong>{source?.label ?? edge.source.type}</strong><span> {edge.semanticType} → </span><strong>{target?.label ?? edge.target.type}</strong><small>{edge.confidence}</small></div>;
+              {visibleGraphEdges.map((edge) => {
+                const source = graph?.nodes.find((node) => node.type === edge.source.type && node.id === edge.source.id);
+                const target = graph?.nodes.find((node) => node.type === edge.target.type && node.id === edge.target.id);
+                return <div key={edge.id}><strong>{source?.label ?? edge.source.type}</strong><span> {edge.semanticType} → </span><strong>{target?.label ?? edge.target.type}</strong><small>{edge.confidence} · {edge.hypothesisTitle}</small><div className="row-actions"><button className="result-action" onClick={() => createTaskFromHypothesis(edge)}>Назначить проверку</button><button className="result-action" onClick={() => startTransition(() => generateReport(null).catch(handleFormError))}>В итоговый отчет</button></div></div>;
               })}
             </div>
           </div>
@@ -916,10 +1015,10 @@ function App() {
               <Activity size={18} />
             </div>
             <div className="report-options">
-              <label>Формат<select value="TEXT" disabled><option>TEXT</option></select></label>
+              <label>Формат<select value={reportFormat} onChange={(event)=>setReportFormat(event.target.value)}><option value="TEXT">TEXT</option><option value="HTML">HTML</option></select></label>
               <label>Шаблон<select value={reportTemplate} onChange={(event) => setReportTemplate(event.target.value)}><option value="FULL">Полный аналитический</option><option value="SUMMARY">Краткая сводка</option></select></label>
             </div>
-            <pre>{preview?.content ?? "Сформируйте предпросмотр, чтобы проверить обязательные поля, экспертизы и гипотезы."}</pre>
+            {preview && reportFormat === "HTML" ? <div className="html-preview" dangerouslySetInnerHTML={{__html:preview.content}} /> : <pre>{preview?.content ?? "Сформируйте предпросмотр, чтобы проверить обязательные поля, экспертизы и гипотезы."}</pre>}
             {preview?.hasOpenLabRequests ? <button className="force-button" onClick={() => startTransition(() => generateReport(true).catch(handleFormError))}>Продолжить с пометкой «Данные ожидаются»</button> : null}
             {approvedReport ? (
               <button className="download-button" onClick={() => startTransition(() => downloadReport().catch((error) => setMessage(error.message)))} disabled={isPending}>

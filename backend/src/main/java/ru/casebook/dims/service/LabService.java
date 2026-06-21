@@ -12,6 +12,8 @@ import ru.casebook.dims.repo.UserRepository;
 
 import java.util.List;
 import java.util.UUID;
+import java.time.Instant;
+import java.util.Map;
 
 @Service
 public class LabService {
@@ -35,6 +37,8 @@ public class LabService {
         return labs.findByEvidenceId(evidenceId);
     }
 
+    public List<LabRequest> listByCase(UUID caseId) { return labs.findByCaseFileId(caseId); }
+
     public List<LabRequest> queue(UserAccount actor) {
         currentUserService.requireAnyRole(actor, Role.LAB_ANALYST);
         return labs.findByLabAssigneeIdOrderByDesiredDueDateAsc(actor.getId());
@@ -48,12 +52,14 @@ public class LabService {
     public LabRequest create(UserAccount actor, UUID evidenceId, LabRequestCreate request) {
         currentUserService.requireAnyRole(actor, Role.DETECTIVE, Role.ASSISTANT);
         Evidence item = evidence.findById(evidenceId).orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "EVIDENCE_NOT_FOUND", "Улика не найдена"));
-        if (labs.existsByEvidenceIdAndStatusNot(evidenceId, LabRequestStatus.COMPLETED)) {
-            throw new ApiException(HttpStatus.CONFLICT, "ACTIVE_LAB_REQUEST_EXISTS", "По этой улике уже есть активный лабораторный запрос");
-        }
+        labs.findFirstByEvidenceIdAndStatusNot(evidenceId, LabRequestStatus.COMPLETED).ifPresent(active -> {
+            throw new ApiException(HttpStatus.CONFLICT, "ACTIVE_LAB_REQUEST_EXISTS", "По этой улике уже есть активный лабораторный запрос", Map.of("activeLabRequestId", active.getId().toString(), "registrationNumber", active.getRegistrationNumber()));
+        });
+        if (!request.desiredDueDate().isAfter(Instant.now())) throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_LAB_DEADLINE", "Срок экспертизы должен быть в будущем");
         UserAccount labAssignee = users.findByRoleAndActiveTrue(Role.LAB_ANALYST).stream().findFirst()
                 .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST, "LAB_ASSIGNEE_NOT_FOUND", "Нет активного лаборанта"));
-        LabRequest created = labs.save(new LabRequest(item.getCaseFile(), item, request.profile(), request.questions(), request.desiredDueDate(), actor, labAssignee));
+        String number = "LAB-" + item.getCaseFile().getOpenedAt().atZone(java.time.ZoneOffset.UTC).getYear() + "-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+        LabRequest created = labs.save(new LabRequest(item.getCaseFile(), number, item, request.profile(), request.questions(), request.desiredDueDate(), actor, labAssignee));
         item.setStatus(EvidenceStatus.UNDER_EXAMINATION);
         notificationService.notify(labAssignee, "LAB_REQUEST_ASSIGNED", "{\"labRequestId\":\"" + created.getId() + "\"}");
         auditService.record(actor, "LAB_REQUEST_CREATED", "LabRequest", created.getId(), "{\"evidenceId\":\"" + evidenceId + "\"}");
@@ -64,6 +70,8 @@ public class LabService {
     public LabRequest changeStatus(UserAccount actor, UUID id, LabRequestStatus status) {
         currentUserService.requireAnyRole(actor, Role.LAB_ANALYST);
         LabRequest lab = labs.findById(id).orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "LAB_REQUEST_NOT_FOUND", "Лабораторный запрос не найден"));
+        if (status == LabRequestStatus.COMPLETED) throw new ApiException(HttpStatus.BAD_REQUEST, "LAB_RESULT_REQUIRED", "Завершение возможно только после внесения заключения");
+        if (lab.getStatus() == LabRequestStatus.COMPLETED || status == LabRequestStatus.CREATED) throw new ApiException(HttpStatus.CONFLICT, "INVALID_LAB_STATUS_TRANSITION", "Недопустимый переход статуса экспертизы");
         lab.setStatus(status);
         notificationService.notify(lab.getRequester(), "LAB_STATUS_CHANGED", "{\"labRequestId\":\"" + lab.getId() + "\",\"status\":\"" + status + "\"}");
         auditService.record(actor, "LAB_REQUEST_STATUS_CHANGED", "LabRequest", lab.getId(), "{\"status\":\"" + status + "\"}");
@@ -77,6 +85,9 @@ public class LabService {
             throw new ApiException(HttpStatus.BAD_REQUEST, "LAB_RESULT_TOO_SHORT", "Заключение должно содержать не менее 10 000 знаков");
         }
         LabRequest lab = labs.findById(id).orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "LAB_REQUEST_NOT_FOUND", "Лабораторный запрос не найден"));
+        if (lab.getStatus() != LabRequestStatus.IN_PROGRESS) {
+            throw new ApiException(HttpStatus.CONFLICT, "LAB_NOT_IN_PROGRESS", "Сначала примите экспертизу в работу");
+        }
         lab.complete(resultText);
         lab.getEvidence().setStatus(EvidenceStatus.EXAMINATION_COMPLETED);
         notificationService.notify(lab.getRequester(), "LAB_RESULT_READY", "{\"labRequestId\":\"" + lab.getId() + "\"}");

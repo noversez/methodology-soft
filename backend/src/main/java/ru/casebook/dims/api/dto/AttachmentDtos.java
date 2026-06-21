@@ -14,7 +14,7 @@ public final class AttachmentDtos {
     public record AttachmentRequest(@NotBlank String fileName, @NotBlank String mimeType, @Min(1) long sizeBytes) {
     }
 
-    public record AttachmentResponse(UUID id, String ownerType, UUID ownerId, String fileName, String mimeType, long sizeBytes, String storagePath, String sha256, UUID uploadedBy, Instant createdAt) {
+    public record AttachmentResponse(UUID id, String ownerType, UUID ownerId, String fileName, String mimeType, long sizeBytes, String storagePath, String sha256, UUID uploadedBy, Instant capturedAt, Double latitude, Double longitude, Instant createdAt) {
         public static AttachmentResponse from(Attachment item) {
             return new AttachmentResponse(
                     item.getId(),
@@ -26,6 +26,9 @@ public final class AttachmentDtos {
                     item.getStoragePath(),
                     item.getSha256(),
                     item.getUploadedBy().getId(),
+                    item.getCapturedAt(),
+                    item.getLatitude(),
+                    item.getLongitude(),
                     item.getCreatedAt()
             );
         }

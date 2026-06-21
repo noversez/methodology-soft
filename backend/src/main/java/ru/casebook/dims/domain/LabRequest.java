@@ -11,6 +11,9 @@ public class LabRequest {
     @Id
     private UUID id = UUID.randomUUID();
 
+    @Column(nullable = false, unique = true)
+    private String registrationNumber;
+
     @ManyToOne(optional = false, fetch = FetchType.LAZY)
     private CaseFile caseFile;
 
@@ -51,8 +54,9 @@ public class LabRequest {
     protected LabRequest() {
     }
 
-    public LabRequest(CaseFile caseFile, Evidence evidence, String profile, String questions, Instant desiredDueDate, UserAccount requester, UserAccount labAssignee) {
+    public LabRequest(CaseFile caseFile, String registrationNumber, Evidence evidence, String profile, String questions, Instant desiredDueDate, UserAccount requester, UserAccount labAssignee) {
         this.caseFile = caseFile;
+        this.registrationNumber = registrationNumber;
         this.evidence = evidence;
         this.profile = profile;
         this.questions = questions;
@@ -61,12 +65,17 @@ public class LabRequest {
         this.labAssignee = labAssignee;
     }
 
+    public LabRequest(CaseFile caseFile, Evidence evidence, String profile, String questions, Instant desiredDueDate, UserAccount requester, UserAccount labAssignee) {
+        this(caseFile, "LAB-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase(), evidence, profile, questions, desiredDueDate, requester, labAssignee);
+    }
+
     @PreUpdate
     void touch() {
         updatedAt = Instant.now();
     }
 
     public UUID getId() { return id; }
+    public String getRegistrationNumber() { return registrationNumber; }
     public CaseFile getCaseFile() { return caseFile; }
     public Evidence getEvidence() { return evidence; }
     public String getProfile() { return profile; }
