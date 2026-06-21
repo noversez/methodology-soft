@@ -6,6 +6,30 @@
   text-rendering: optimizeLegibility;
 }
 
+.login-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: inherit;
+}
+
+.login-card {
+  width: min(420px, 100%);
+  display: grid;
+  gap: 18px;
+  padding: 32px;
+  border: 1px solid #d7ddd8;
+  border-radius: 20px;
+  background: #ffffff;
+  box-shadow: 0 20px 60px rgb(15 23 42 / 12%);
+}
+
+.login-card h1 { margin: 0; }
+.login-card .form-field { grid-column: 1 / -1; }
+
+:root[data-theme="dark"] .login-card { background: #18201d; border-color: #34413b; }
+
 :root[data-theme="dark"] {
   color: #edf2ef;
   background: #111614;

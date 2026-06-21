@@ -9,16 +9,19 @@ import ru.casebook.dims.api.dto.UserDto;
 import ru.casebook.dims.repo.UserRepository;
 import ru.casebook.dims.service.AuditService;
 import ru.casebook.dims.service.SecurityHash;
+import ru.casebook.dims.service.AuthSessionService;
 
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
     private final UserRepository users;
     private final AuditService auditService;
+    private final AuthSessionService sessions;
 
-    public AuthController(UserRepository users, AuditService auditService) {
+    public AuthController(UserRepository users, AuditService auditService, AuthSessionService sessions) {
         this.users = users;
         this.auditService = auditService;
+        this.sessions = sessions;
     }
 
     @PostMapping("/login")
@@ -28,6 +31,10 @@ public class AuthController {
                 .filter(candidate -> candidate.isActive())
                 .orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "BAD_CREDENTIALS", "Неверный логин или пароль"));
         auditService.record(user, "LOGIN", "User", user.getId(), "{}");
-        return new LoginResponse(UserDto.from(user));
+        return new LoginResponse(UserDto.from(user), sessions.create(user));
     }
+
+    @PostMapping("/logout")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void logout(@RequestHeader("X-User-Id") String token) { sessions.revoke(token); }
 }

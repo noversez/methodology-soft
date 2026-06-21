@@ -39,8 +39,7 @@ public class CaseService {
         currentUserService.requireAnyRole(actor, Role.DETECTIVE, Role.INSPECTOR);
         String year = String.valueOf(request.openedAt().atZone(ZoneOffset.UTC).getYear());
         String prefix = "CASE-" + year + "-";
-        long next = cases.countByRegistrationNumberStartingWith(prefix) + 1;
-        String number = prefix + String.format("%03d", next);
+        String number = prefix + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
         CaseFile created = cases.save(new CaseFile(number, request.title(), request.openedAt(), request.priority(), request.description(), actor));
         auditService.record(actor, "CASE_CREATED", "Case", created.getId(), "{\"registrationNumber\":\"" + number + "\"}");
         return created;

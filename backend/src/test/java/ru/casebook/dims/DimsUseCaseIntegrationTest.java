@@ -5,6 +5,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import ru.casebook.dims.api.ApiException;
 import ru.casebook.dims.api.dto.CaseDtos.CaseRequest;
+import ru.casebook.dims.api.dto.CaseContextDtos.SceneRequest;
 import ru.casebook.dims.api.dto.EvidenceDtos.EvidenceRequest;
 import ru.casebook.dims.api.dto.GraphDtos.GraphEdgeRequest;
 import ru.casebook.dims.api.dto.GraphDtos.HypothesisRequest;
@@ -34,6 +35,8 @@ class DimsUseCaseIntegrationTest {
     @Autowired GraphService graphService;
     @Autowired ReportService reportService;
     @Autowired AttachmentService attachmentService;
+    @Autowired AuthSessionService authSessionService;
+    @Autowired CaseContextService caseContextService;
     @Autowired UserRepository users;
     @Autowired NotificationRepository notifications;
     @Autowired AuditLogRepository auditLogs;
@@ -52,6 +55,26 @@ class DimsUseCaseIntegrationTest {
                 .isInstanceOf(ApiException.class)
                 .extracting("code")
                 .isEqualTo("ACCESS_DENIED");
+    }
+
+    @Test
+    void uc01UsesAuthenticatedSessionAndPersistsIncidentScene() {
+        UserAccount detective = user("sherlock");
+        String token = authSessionService.create(detective);
+        assertThat(authSessionService.require(token).getId()).isEqualTo(detective.getId());
+        assertThatThrownBy(() -> authSessionService.require("invalid-token"))
+                .isInstanceOf(ApiException.class)
+                .extracting("code")
+                .isEqualTo("AUTH_REQUIRED");
+
+        CaseFile caseFile = createCase(detective, "Scene case");
+        IncidentScene scene = caseContextService.addScene(detective, caseFile.getId(), new SceneRequest(
+                "Основное место", "Первичный осмотр помещения", "Бейкер-стрит, 221B", 51.5237, -0.1585
+        ));
+
+        assertThat(scene.getCaseFile().getId()).isEqualTo(caseFile.getId());
+        assertThat(caseContextService.scenes(caseFile.getId())).extracting(IncidentScene::getId).contains(scene.getId());
+        assertThat(auditLogs.findAll()).anyMatch(log -> "INCIDENT_SCENE_CREATED".equals(log.getAction()) && scene.getId().equals(log.getEntityId()));
     }
 
     @Test

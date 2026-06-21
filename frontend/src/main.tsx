@@ -22,17 +22,20 @@ const API = "http://127.0.0.1:8080/api";
 
 type Role = "DETECTIVE" | "ASSISTANT" | "INSPECTOR" | "AGENT" | "LAB_ANALYST" | "ADMIN";
 type User = { id: string; login: string; role: Role; displayName: string };
+type AuthResponse = { user: User; token?: string };
 type CaseFile = { id: string; registrationNumber: string; title: string; openedAt: string; priority: string; status: string; description: string };
+type IncidentScene = { id: string; caseId: string; title: string; description: string; address: string; latitude?: number; longitude?: number; createdAt: string };
 type Evidence = { id: string; caseId: string; registrationNumber: string; name: string; type: string; importance: string; description: string; discoveryDateTime: string; latitude?: number; longitude?: number; locationTitle?: string; status: string };
 type TaskItem = { id: string; caseId: string; title: string; description: string; assigneeId: string; priority: string; deadline: string; status: string; resultText?: string; resultEvidenceId?: string };
 type LabRequest = { id: string; evidenceId: string; profile: string; questions: string; desiredDueDate: string; status: string; requesterId: string; labAssigneeId?: string; resultText?: string };
 type Graph = { nodes: { type: string; id: string; label: string; status: string }[]; edges: { id: string; source: { type: string; id: string }; target: { type: string; id: string }; semanticType: string; confidence: string }[]; filtered: boolean; warning?: string };
 type ReportPreview = { content: string; hasOpenLabRequests: boolean; warning?: string };
 type ReportFile = { id: string; registrationNumber: string; status: string };
-type FormKind = "case" | "evidence" | "task" | "lab" | "labResult" | "edge" | "agentResult";
+type FormKind = "case" | "scene" | "evidence" | "task" | "lab" | "labResult" | "edge" | "agentResult";
 type FieldErrors = Record<string, string>;
 type ApiErrorBody = { code?: string; message?: string; details?: Record<string, unknown> };
 type CaseDraft = { title: string; openedAt: string; priority: string; description: string };
+type SceneDraft = { title: string; description: string; address: string; latitude: string; longitude: string };
 type EvidenceDraft = { name: string; type: string; importance: string; description: string; discoveryDateTime: string; locationTitle: string; latitude: string; longitude: string };
 type AgentResultDraft = { taskId: string; note: string; evidenceName: string; evidenceType: string; locationTitle: string };
 type TaskDraft = { title: string; description: string; assigneeId: string; priority: string; deadline: string };
@@ -46,6 +49,7 @@ const emptyCaseDraft = (): CaseDraft => ({
   priority: "MEDIUM",
   description: "",
 });
+const emptySceneDraft = (): SceneDraft => ({ title: "", description: "", address: "", latitude: "", longitude: "" });
 
 const emptyEvidenceDraft = (): EvidenceDraft => ({
   name: "",
@@ -128,9 +132,13 @@ async function request<T>(path: string, userId?: string, init: RequestInit = {})
 function App() {
   const [users, setUsers] = useState<User[]>([]);
   const [userId, setUserId] = useState("");
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [login, setLogin] = useState("sherlock");
+  const [password, setPassword] = useState("holmes");
   const [cases, setCases] = useState<CaseFile[]>([]);
   const [selectedCaseId, setSelectedCaseId] = useState("");
   const [evidence, setEvidence] = useState<Evidence[]>([]);
+  const [scenes, setScenes] = useState<IncidentScene[]>([]);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [myTasks, setMyTasks] = useState<TaskItem[]>([]);
   const [labs, setLabs] = useState<LabRequest[]>([]);
@@ -143,6 +151,7 @@ function App() {
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [activeForm, setActiveForm] = useState<FormKind | null>(null);
   const [caseDraft, setCaseDraft] = useState<CaseDraft>(() => loadDrafts().caseDraft);
+  const [sceneDraft, setSceneDraft] = useState<SceneDraft>(emptySceneDraft);
   const [evidenceDraft, setEvidenceDraft] = useState<EvidenceDraft>(() => loadDrafts().evidenceDraft);
   const [agentResultDraft, setAgentResultDraft] = useState<AgentResultDraft>(() => loadDrafts().agentResultDraft);
   const [taskDraft, setTaskDraft] = useState<TaskDraft>(emptyTaskDraft);
@@ -158,7 +167,6 @@ function App() {
   const [isOnline, setIsOnline] = useState(() => navigator.onLine);
   const [isPending, startTransition] = useTransition();
 
-  const currentUser = users.find((user) => user.id === userId);
   const selectedCase = cases.find((item) => item.id === selectedCaseId);
   const firstEvidence = evidence[0];
   const visibleTasks = currentUser?.role === "AGENT" || currentUser?.role === "ASSISTANT" ? myTasks : tasks;
@@ -166,24 +174,25 @@ function App() {
 
   async function loadBase() {
     const [loadedUsers, loadedCases] = await Promise.all([
-      request<User[]>("/users"),
+      request<User[]>("/users", userId),
       request<CaseFile[]>("/cases"),
     ]);
     setUsers(loadedUsers);
-    setUserId((prev) => prev || loadedUsers[0]?.id || "");
     setCases(loadedCases);
     setSelectedCaseId((prev) => prev || loadedCases[0]?.id || "");
   }
 
   async function loadCaseDetails(caseId: string) {
-    const [loadedEvidence, loadedTasks, loadedGraph] = await Promise.all([
+    const [loadedEvidence, loadedTasks, loadedGraph, loadedScenes] = await Promise.all([
       request<Evidence[]>(`/cases/${caseId}/evidence`),
       request<TaskItem[]>(`/cases/${caseId}/tasks`),
       request<Graph>(`/cases/${caseId}/graph`),
+      request<IncidentScene[]>(`/cases/${caseId}/scenes`),
     ]);
     setEvidence(loadedEvidence);
     setTasks(loadedTasks);
     setGraph(loadedGraph);
+    setScenes(loadedScenes);
     if (loadedEvidence[0]) {
       setLabs(await request<LabRequest[]>(`/evidence/${loadedEvidence[0].id}/lab-requests`));
     } else {
@@ -191,9 +200,20 @@ function App() {
     }
   }
 
+  async function authenticate(event: React.FormEvent) {
+    event.preventDefault();
+    setFieldErrors({});
+    try {
+      const auth = await request<AuthResponse>("/auth/login", undefined, { method: "POST", body: JSON.stringify({ login: login.trim(), password }) });
+      setUserId(auth.token ?? auth.user.id);
+      setCurrentUser(auth.user);
+      setMessage("");
+    } catch (error) { handleFormError(error); }
+  }
+
   useEffect(() => {
-    loadBase().catch((error) => setMessage(error.message));
-  }, []);
+    if (userId && currentUser) loadBase().catch((error) => setMessage(error.message));
+  }, [userId]);
 
   useEffect(() => {
     if (selectedCaseId) {
@@ -238,7 +258,7 @@ function App() {
   const assignees = users.filter((user) => user.role === "AGENT" || user.role === "ASSISTANT");
 
   async function createCase(draft: CaseDraft) {
-    if (!userId) return;
+    if (!userId) throw new ApiRequestError("Сеанс входа не получен. Войдите в систему повторно", "AUTH_REQUIRED");
     const created = await request<CaseFile>("/cases", userId, {
       method: "POST",
       body: JSON.stringify({
@@ -291,6 +311,8 @@ function App() {
 
   function closeForm() {
     setFieldErrors({});
+    if (activeForm === "case") setCaseDraft(emptyCaseDraft());
+    if (activeForm === "scene") setSceneDraft(emptySceneDraft());
     setActiveForm(null);
     if (activeForm === "edge") setConnectSelection([]);
   }
@@ -348,6 +370,23 @@ function App() {
     setFieldErrors(visibleErrors);
     if (Object.keys(visibleErrors).length) return;
     startTransition(() => createCase(caseDraft).catch(handleFormError));
+  }
+
+  function submitScene(event: React.FormEvent) {
+    event.preventDefault();
+    const errors = { title: required(sceneDraft.title, "Название"), address: required(sceneDraft.address, "Адрес"), description: required(sceneDraft.description, "Описание") };
+    const visibleErrors = Object.fromEntries(Object.entries(errors).filter(([, value]) => value));
+    setFieldErrors(visibleErrors);
+    if (Object.keys(visibleErrors).length || !selectedCaseId || !userId) return;
+    startTransition(async () => {
+      try {
+        const created = await request<IncidentScene>(`/cases/${selectedCaseId}/scenes`, userId, { method: "POST", body: JSON.stringify({ ...sceneDraft, latitude: sceneDraft.latitude ? Number(sceneDraft.latitude) : null, longitude: sceneDraft.longitude ? Number(sceneDraft.longitude) : null }) });
+        setScenes((items) => [created, ...items]);
+        setSceneDraft(emptySceneDraft());
+        setActiveForm(null);
+        setMessage("Место происшествия зафиксировано");
+      } catch (error) { handleFormError(error); }
+    });
   }
 
   function submitEvidence(event: React.FormEvent) {
@@ -553,6 +592,7 @@ function App() {
   const actions = useMemo(
     () => [
       { label: "Создать дело", icon: BookOpen, run: () => Promise.resolve(openForm("case")) },
+      { label: "Место происшествия", icon: RadioTower, run: () => Promise.resolve(openForm("scene")) },
       { label: "Добавить улику", icon: Plus, run: () => Promise.resolve(openForm("evidence")) },
       { label: "Назначить задачу", icon: ClipboardList, run: () => Promise.resolve(openForm("task")) },
       { label: "Запрос в лабораторию", icon: Beaker, run: () => { setLabDraft((draft) => ({ ...draft, evidenceId: draft.evidenceId || firstEvidence?.id || "" })); return Promise.resolve(openForm("lab")); } },
@@ -560,6 +600,21 @@ function App() {
     ],
     [userId, selectedCaseId, firstEvidence?.id],
   );
+
+  if (!currentUser) {
+    return (
+      <main className="login-shell">
+        <form className="login-card" onSubmit={authenticate}>
+          <Shield size={38} />
+          <h1>Вход в DIMS</h1>
+          <FormField label="Логин" error={fieldErrors.login}><input value={login} onChange={(event) => setLogin(event.target.value)} autoFocus /></FormField>
+          <FormField label="Пароль" error={fieldErrors.password}><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></FormField>
+          {message ? <div className="warning" role="alert">{message}</div> : null}
+          <button className="primary" type="submit" disabled={isPending}>Войти</button>
+        </form>
+      </main>
+    );
+  }
 
   return (
     <main className="app-shell">
@@ -571,16 +626,7 @@ function App() {
             <span>Casebook Holmes</span>
           </div>
         </div>
-        <label className="field">
-          Роль
-          <select value={userId} onChange={(event) => setUserId(event.target.value)}>
-            {users.map((user) => (
-              <option key={user.id} value={user.id}>
-                {user.displayName} · {user.role}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="field"><span>Пользователь</span><strong>{currentUser.displayName}</strong><small>{currentUser.role}</small></div>
         <label className="field">
           Дело
           <select value={selectedCaseId} onChange={(event) => setSelectedCaseId(event.target.value)}>
@@ -595,6 +641,7 @@ function App() {
           {theme === "light" ? <Moon size={18} /> : <Sun size={18} />}
           {theme === "light" ? "Темная тема" : "Светлая тема"}
         </button>
+        <button className="theme-toggle" onClick={() => { fetch(`${API}/auth/logout`, { method: "POST", headers: { "X-User-Id": userId } }).finally(() => { setUserId(""); setCurrentUser(null); setCases([]); }); }}>Выйти</button>
       </aside>
 
       <section className="workspace">
@@ -646,6 +693,19 @@ function App() {
               <FormField label="Описание" error={fieldErrors.description} wide>
                 <textarea value={caseDraft.description} onChange={(event) => setCaseDraft((draft) => ({ ...draft, description: event.target.value }))} rows={4} />
               </FormField>
+              <FormActions pending={isPending} onCancel={closeForm} />
+            </form>
+          </FormDialog>
+        ) : null}
+
+        {activeForm === "scene" ? (
+          <FormDialog title="Место происшествия" onClose={closeForm}>
+            <form className="entity-form" onSubmit={submitScene} noValidate>
+              <FormField label="Название" error={fieldErrors.title}><input value={sceneDraft.title} onChange={(event) => setSceneDraft((draft) => ({ ...draft, title: event.target.value }))} autoFocus /></FormField>
+              <FormField label="Адрес" error={fieldErrors.address}><input value={sceneDraft.address} onChange={(event) => setSceneDraft((draft) => ({ ...draft, address: event.target.value }))} /></FormField>
+              <FormField label="Широта"><input type="number" min="-90" max="90" step="any" value={sceneDraft.latitude} onChange={(event) => setSceneDraft((draft) => ({ ...draft, latitude: event.target.value }))} /></FormField>
+              <FormField label="Долгота"><input type="number" min="-180" max="180" step="any" value={sceneDraft.longitude} onChange={(event) => setSceneDraft((draft) => ({ ...draft, longitude: event.target.value }))} /></FormField>
+              <FormField label="Первичное описание" error={fieldErrors.description} wide><textarea rows={4} value={sceneDraft.description} onChange={(event) => setSceneDraft((draft) => ({ ...draft, description: event.target.value }))} /></FormField>
               <FormActions pending={isPending} onCancel={closeForm} />
             </form>
           </FormDialog>
@@ -773,6 +833,9 @@ function App() {
                 <span>{item.type} · {item.status}</span>
               </article>
             ))}
+          </Panel>
+          <Panel title="Места происшествия" count={scenes.length}>
+            {scenes.map((item) => <article className="row" key={item.id}><strong>{item.title}</strong><span>{item.address}</span></article>)}
           </Panel>
           <Panel title={currentUser?.role === "AGENT" || currentUser?.role === "ASSISTANT" ? "Мои задачи" : "Задачи"} count={visibleTasks.length}>
             {visibleTasks.map((item) => (

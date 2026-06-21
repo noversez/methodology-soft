@@ -9,6 +9,6 @@ public final class AuthDtos {
     public record LoginRequest(@NotBlank String login, @NotBlank String password) {
     }
 
-    public record LoginResponse(UserDto user) {
+    public record LoginResponse(UserDto user, String token) {
     }
 }

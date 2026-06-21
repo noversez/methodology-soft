@@ -5,33 +5,19 @@ import org.springframework.stereotype.Service;
 import ru.casebook.dims.api.ApiException;
 import ru.casebook.dims.domain.Role;
 import ru.casebook.dims.domain.UserAccount;
-import ru.casebook.dims.repo.UserRepository;
 
 import java.util.Arrays;
-import java.util.UUID;
 
 @Service
 public class CurrentUserService {
-    private final UserRepository users;
+    private final AuthSessionService sessions;
 
-    public CurrentUserService(UserRepository users) {
-        this.users = users;
+    public CurrentUserService(AuthSessionService sessions) {
+        this.sessions = sessions;
     }
 
     public UserAccount requireUser(String userId) {
-        if (userId == null || userId.isBlank()) {
-            throw new ApiException(HttpStatus.UNAUTHORIZED, "AUTH_REQUIRED", "Передайте X-User-Id");
-        }
-        UUID id;
-        try {
-            id = UUID.fromString(userId);
-        } catch (IllegalArgumentException ex) {
-            throw new ApiException(HttpStatus.UNAUTHORIZED, "AUTH_INVALID", "Некорректный X-User-Id");
-        }
-        UserAccount user = users.findById(id)
-                .filter(UserAccount::isActive)
-                .orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "AUTH_INVALID", "Пользователь не найден"));
-        return user;
+        return sessions.require(userId);
     }
 
     public void requireAnyRole(UserAccount user, Role... roles) {
