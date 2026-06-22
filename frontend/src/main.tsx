@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState, useTransition } from "reac
 import { createRoot } from "react-dom/client";
 import {
   Activity,
+  ArrowRight,
   Beaker,
   BookOpen,
   Camera,
@@ -15,6 +16,7 @@ import {
   Pencil,
   Plus,
   RadioTower,
+  RotateCcw,
   Search,
   Shield,
   Sun,
@@ -49,6 +51,7 @@ type TaskDraft = { title: string; description: string; assigneeId: string; prior
 type LabDraft = { evidenceId: string; profile: string; questions: string; desiredDueDate: string };
 type EdgeDraft = { source: string; target: string; semanticType: string; confidence: string; hypothesisTitle: string; hypothesisText: string };
 type GraphNode = Graph["nodes"][number];
+type GraphLayout = {positions:Record<string,{x:number;y:number}>;pan:{x:number;y:number}};
 
 const roleTitles: Record<Role,string> = {DETECTIVE:"Ведущий детектив",ASSISTANT:"Ассистент",INSPECTOR:"Инспектор",AGENT:"Полевой агент",LAB_ANALYST:"Эксперт лаборатории",ADMIN:"Администратор"};
 
@@ -87,6 +90,16 @@ const nodePoint = (index: number) => {
 
 const NETWORK_MESSAGE = "Нестабильность сети, проверьте подключение к интернету";
 const DRAFTS_KEY = "dims-form-drafts-v1";
+const GRAPH_LAYOUTS_KEY = "dims-graph-layouts-v1";
+const EMPTY_GRAPH_LAYOUT: GraphLayout = {positions:{},pan:{x:0,y:0}};
+
+function loadGraphLayouts(): Record<string,GraphLayout> {
+  try {
+    const value=JSON.parse(localStorage.getItem(GRAPH_LAYOUTS_KEY)??"null");
+    if(value?.version===1&&value.layouts&&typeof value.layouts==="object")return value.layouts;
+  } catch { /* Ignore damaged local preferences. */ }
+  return {};
+}
 
 class ApiRequestError extends Error {
   constructor(message: string, readonly code = "REQUEST_ERROR", readonly details: Record<string, unknown> = {}) {
@@ -194,10 +207,11 @@ function App() {
   const [connectSelection, setConnectSelection] = useState<string[]>([]);
   const [graphBoardHeight, setGraphBoardHeight] = useState(430);
   const [graphNodeScale, setGraphNodeScale] = useState(1);
-  const [graphNodePositions, setGraphNodePositions] = useState<Record<string,{x:number;y:number}>>({});
+  const [graphLayouts,setGraphLayouts]=useState<Record<string,GraphLayout>>(loadGraphLayouts);
   const graphCanvasRef = useRef<HTMLDivElement | null>(null);
   const graphDragRef = useRef<{key:string;pointerId:number;startX:number;startY:number;originX:number;originY:number;moved:boolean}|null>(null);
   const draggedGraphNodeRef = useRef("");
+  const graphPanDragRef=useRef<{pointerId:number;startX:number;startY:number;originX:number;originY:number}|null>(null);
   const [resultPhoto, setResultPhoto] = useState<File | null>(null);
   const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
   const [activeLabId, setActiveLabId] = useState("");
@@ -214,6 +228,8 @@ function App() {
   const [isPending, startTransition] = useTransition();
 
   const selectedCase = cases.find((item) => item.id === selectedCaseId);
+  const graphLayout=graphLayouts[selectedCaseId]??EMPTY_GRAPH_LAYOUT;
+  const graphNodePositions=graphLayout.positions;
   const firstEvidence = evidence[0];
   const visibleTasks = currentUser?.role === "AGENT" || currentUser?.role === "ASSISTANT" ? myTasks : tasks;
   const visibleLabs = currentUser?.role === "LAB_ANALYST" ? labQueue : labs;
@@ -281,6 +297,11 @@ function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
+
+  useEffect(() => {
+    const timeout=window.setTimeout(()=>{try{localStorage.setItem(GRAPH_LAYOUTS_KEY,JSON.stringify({version:1,layouts:graphLayouts}));}catch{/* Layout persistence is optional. */}},180);
+    return ()=>window.clearTimeout(timeout);
+  },[graphLayouts]);
 
   useEffect(() => {
     if (!userId || !currentUser) return;
@@ -405,6 +426,11 @@ function App() {
     return graphNodePositions[nodeKey(node)] ?? {x:nodePoint(index).x/10,y:nodePoint(index).y/4.3};
   }
 
+  function updateCurrentGraphLayout(update:(layout:GraphLayout)=>GraphLayout) {
+    if(!selectedCaseId)return;
+    setGraphLayouts((layouts)=>({...layouts,[selectedCaseId]:update(layouts[selectedCaseId]??EMPTY_GRAPH_LAYOUT)}));
+  }
+
   function startGraphNodeDrag(event: React.PointerEvent<HTMLButtonElement>,node: GraphNode,index: number) {
     if(event.button!==0)return;
     const position=graphNodePosition(node,index);
@@ -418,7 +444,7 @@ function App() {
     const rect=canvas.getBoundingClientRect(); const dx=event.clientX-drag.startX; const dy=event.clientY-drag.startY;
     if(Math.abs(dx)+Math.abs(dy)>4)drag.moved=true;
     if(!drag.moved)return;
-    setGraphNodePositions((positions)=>({...positions,[drag.key]:{x:Math.min(94,Math.max(6,drag.originX+dx/rect.width*100)),y:Math.min(92,Math.max(8,drag.originY+dy/rect.height*100))}}));
+    updateCurrentGraphLayout((layout)=>({...layout,positions:{...layout.positions,[drag.key]:{x:Math.min(94,Math.max(6,drag.originX+dx/rect.width*100)),y:Math.min(92,Math.max(8,drag.originY+dy/rect.height*100))}}}));
   }
 
   function finishGraphNodeDrag(event: React.PointerEvent<HTMLButtonElement>) {
@@ -432,6 +458,30 @@ function App() {
   function activateGraphNode(node: GraphNode) {
     if(draggedGraphNodeRef.current===nodeKey(node)){draggedGraphNodeRef.current="";return;}
     selectGraphNode(node);
+  }
+
+  function startGraphPan(event: React.PointerEvent<HTMLDivElement>) {
+    if(event.button!==0||(event.target as HTMLElement).closest(".connect-hint"))return;
+    graphPanDragRef.current={pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,originX:graphLayout.pan.x,originY:graphLayout.pan.y};
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function moveGraphPan(event: React.PointerEvent<HTMLDivElement>) {
+    const drag=graphPanDragRef.current;
+    if(!drag||drag.pointerId!==event.pointerId)return;
+    updateCurrentGraphLayout((layout)=>({...layout,pan:{x:drag.originX+event.clientX-drag.startX,y:drag.originY+event.clientY-drag.startY}}));
+  }
+
+  function finishGraphPan(event: React.PointerEvent<HTMLDivElement>) {
+    const drag=graphPanDragRef.current;
+    if(!drag||drag.pointerId!==event.pointerId)return;
+    graphPanDragRef.current=null;
+    if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId);
+  }
+
+  function resetGraphLayout() {
+    if(!selectedCaseId)return;
+    setGraphLayouts((layouts)=>{const next={...layouts};delete next[selectedCaseId];return next;});
   }
 
   function openAgentResult(task: TaskItem) {
@@ -1107,15 +1157,17 @@ function App() {
                   <button type="button" onClick={() => setGraphNodeScale((scale) => Math.max(0.65, Number((scale - 0.15).toFixed(2))))} disabled={graphNodeScale <= 0.65} title="Уменьшить карточки" aria-label="Уменьшить карточки">−</button>
                   <button type="button" onClick={() => setGraphNodeScale((scale) => Math.min(1.1, Number((scale + 0.15).toFixed(2))))} disabled={graphNodeScale >= 1.1} title="Увеличить карточки" aria-label="Увеличить карточки">+</button>
                 </div>
+                <div className="graph-control-group" aria-label="Положение графа"><button type="button" onClick={resetGraphLayout} title="Сбросить расположение и центрировать" aria-label="Сбросить расположение и центрировать"><RotateCcw size={15}/></button></div>
               </div>
             </div>
             {graph?.warning && <div className="warning">{graph.warning}</div>}
-            <div ref={graphCanvasRef} className={`graph-canvas${connectSelection.length ? " has-selection" : ""}`} style={{ height: graphBoardHeight }}>
+            <div ref={graphCanvasRef} className={`graph-canvas${connectSelection.length ? " has-selection" : ""}`} style={{ height: graphBoardHeight,backgroundPosition:`${graphLayout.pan.x}px ${graphLayout.pan.y}px` }} onPointerDown={startGraphPan} onPointerMove={moveGraphPan} onPointerUp={finishGraphPan} onPointerCancel={finishGraphPan}>
               {connectSelection.length ? (
                 <div className="connect-hint">
                   <strong>Выберите второй блок · повторный клик отменит выбор</strong>
                 </div>
               ) : null}
+              <div className="graph-world" style={{transform:`translate3d(${graphLayout.pan.x}px,${graphLayout.pan.y}px,0)`}}>
               <svg className="graph-lines" viewBox="0 0 1000 430" preserveAspectRatio="none" aria-hidden="true">
                 <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" /></marker></defs>
                 {visibleGraphEdges.map((edge) => {
@@ -1133,7 +1185,7 @@ function App() {
                   className={`node${connectSelection.includes(nodeKey(node)) ? " is-selected" : ""}`}
                   style={{ left: `${graphNodePosition(node,index).x}%`, top: `${graphNodePosition(node,index).y}%`, "--node-scale": graphNodeScale } as React.CSSProperties}
                   key={nodeKey(node)}
-                  onPointerDown={(event)=>startGraphNodeDrag(event,node,index)}
+                  onPointerDown={(event)=>{event.stopPropagation();startGraphNodeDrag(event,node,index);}}
                   onPointerMove={moveGraphNode}
                   onPointerUp={finishGraphNodeDrag}
                   onPointerCancel={finishGraphNodeDrag}
@@ -1144,13 +1196,16 @@ function App() {
                   <span>{node.type}</span>
                 </button>
               ))}
+              </div>
             </div>
             <div className="edge-list">
+              <div className="edge-list-heading"><div><strong>Связи и гипотезы</strong><span>Логика между объектами выбранного дела</span></div><b>{visibleGraphEdges.length}</b></div>
               {visibleGraphEdges.map((edge) => {
                 const source = graph?.nodes.find((node) => node.type === edge.source.type && node.id === edge.source.id);
                 const target = graph?.nodes.find((node) => node.type === edge.target.type && node.id === edge.target.id);
-                return <div key={edge.id}><strong>{source?.label ?? edge.source.type}</strong><span> {edge.semanticType} → </span><strong>{target?.label ?? edge.target.type}</strong><small>{edge.confidence} · {edge.hypothesisTitle}</small><div className="row-actions"><button className="result-action" onClick={() => createTaskFromHypothesis(edge)}>Назначить проверку</button><button className="result-action" onClick={() => startTransition(() => generateReport(null).catch(handleFormError))}>В итоговый отчет</button>{currentUser?.role==="DETECTIVE"?<button className="result-action danger-action" onClick={()=>startTransition(()=>deleteGraphEdge(edge).catch(handleFormError))}><X size={15}/> Удалить</button>:null}</div></div>;
+                return <GraphEdgeCard key={edge.id} edge={edge} sourceLabel={source?.label??edge.source.type} targetLabel={target?.label??edge.target.type} canDelete={currentUser?.role==="DETECTIVE"} onTask={()=>createTaskFromHypothesis(edge)} onReport={()=>startTransition(()=>generateReport(null).catch(handleFormError))} onDelete={()=>startTransition(()=>deleteGraphEdge(edge).catch(handleFormError))}/>;
               })}
+              {!visibleGraphEdges.length?<div className="edge-empty"><strong>Связей пока нет</strong><span>Выберите два объекта на доске, чтобы описать связь между ними.</span></div>:null}
             </div>
           </div>
           <div className="report-panel">
@@ -1189,6 +1244,21 @@ function Panel({ title, count, children }: { title: string; count: number; child
 function WindowActions({onEdit,onDelete}:{onEdit?:()=>void;onDelete?:()=>void}) {
   if(!onEdit&&!onDelete)return null;
   return <div className="window-actions">{onEdit?<button type="button" onClick={onEdit} title="Изменить" aria-label="Изменить"><Pencil size={14}/></button>:null}{onDelete?<button type="button" className="window-delete" onClick={onDelete} title="Удалить" aria-label="Удалить"><X size={16}/></button>:null}</div>;
+}
+
+function GraphEdgeCard({edge,sourceLabel,targetLabel,canDelete,onTask,onReport,onDelete}:{edge:Graph["edges"][number];sourceLabel:string;targetLabel:string;canDelete:boolean;onTask:()=>void;onReport:()=>void;onDelete:()=>void}) {
+  return <article className="edge-card">
+    <div className="edge-route">
+      <div className="edge-endpoint"><small>Откуда</small><strong title={sourceLabel}>{sourceLabel}</strong></div>
+      <div className="edge-relation"><span>{edge.semanticType}</span><ArrowRight size={17}/></div>
+      <div className="edge-endpoint"><small>Куда</small><strong title={targetLabel}>{targetLabel}</strong></div>
+    </div>
+    <div className="edge-summary">
+      <div className="edge-hypothesis"><small>Гипотеза</small><strong>{edge.hypothesisTitle??"Без названия"}</strong>{edge.hypothesisText?<p>{edge.hypothesisText}</p>:null}</div>
+      <span className={`confidence-badge confidence-${edge.confidence.toLowerCase()}`}>{edge.confidence}</span>
+    </div>
+    <div className="edge-actions"><button type="button" onClick={onTask}><ClipboardList size={15}/>Назначить проверку</button><button type="button" onClick={onReport}><FileText size={15}/>В итоговый отчет</button>{canDelete?<button type="button" className="edge-delete" onClick={onDelete} title="Удалить связь" aria-label="Удалить связь"><X size={16}/></button>:null}</div>
+  </article>;
 }
 
 function GraphNodeSelect({ value, nodes, onChange }: { value: string; nodes: Graph["nodes"]; onChange: (value: string) => void }) {
