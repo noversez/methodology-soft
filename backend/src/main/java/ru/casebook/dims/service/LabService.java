@@ -92,14 +92,14 @@ public class LabService {
     @Transactional
     public LabRequest complete(UserAccount actor, UUID id, String resultText) {
         currentUserService.requireAnyRole(actor, Role.LAB_ANALYST);
-        if (resultText.length() < 10_000) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "LAB_RESULT_TOO_SHORT", "Заключение должно содержать не менее 10 000 знаков");
-        }
+        String normalizedResult=resultText==null?"":resultText.trim();
+        if(normalizedResult.isEmpty())throw new ApiException(HttpStatus.BAD_REQUEST,"LAB_RESULT_REQUIRED","Заключение должно содержать от 1 до 20 000 знаков");
+        if(normalizedResult.length()>20_000)throw new ApiException(HttpStatus.BAD_REQUEST,"LAB_RESULT_TOO_LONG","Заключение должно содержать от 1 до 20 000 знаков");
         LabRequest lab = labs.findById(id).orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "LAB_REQUEST_NOT_FOUND", "Лабораторный запрос не найден"));
         if (lab.getStatus() != LabRequestStatus.IN_PROGRESS) {
             throw new ApiException(HttpStatus.CONFLICT, "LAB_NOT_IN_PROGRESS", "Сначала примите экспертизу в работу");
         }
-        lab.complete(resultText);
+        lab.complete(normalizedResult);
         lab.getEvidence().setStatus(EvidenceStatus.EXAMINATION_COMPLETED);
         notificationService.notify(lab.getRequester(), "LAB_RESULT_READY", "{\"labRequestId\":\"" + lab.getId() + "\"}");
         auditService.record(actor, "LAB_REQUEST_COMPLETED", "LabRequest", lab.getId(), "{}");

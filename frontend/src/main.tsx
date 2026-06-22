@@ -10,6 +10,7 @@ import {
   ClipboardList,
   FileText,
   Loader2,
+  ListFilter,
   Maximize2,
   Minimize2,
   Moon,
@@ -54,6 +55,7 @@ type GraphNode = Graph["nodes"][number];
 type GraphLayout = {positions:Record<string,{x:number;y:number}>;pan:{x:number;y:number}};
 
 const roleTitles: Record<Role,string> = {DETECTIVE:"Ведущий детектив",ASSISTANT:"Ассистент",INSPECTOR:"Инспектор",AGENT:"Полевой агент",LAB_ANALYST:"Эксперт лаборатории",ADMIN:"Администратор"};
+const graphNodeTypeTitles: Record<string,string> = {CASE:"Дела",EVIDENCE:"Улики",TASK:"Задачи",LAB_REQUEST:"Экспертизы",REPORT:"Отчеты",LOCATION:"Места",PERSON:"Люди",HYPOTHESIS:"Гипотезы"};
 
 const emptyCaseDraft = (): CaseDraft => ({
   title: "",
@@ -235,7 +237,11 @@ function App() {
   const visibleLabs = currentUser?.role === "LAB_ANALYST" ? labQueue : labs;
   const visibleGraphNodes = useMemo(() => {
     const query = graphQuery.trim().toLocaleLowerCase("ru-RU");
-    return (graph?.nodes ?? []).filter((node) => (graphTypeFilter === "ALL" || node.type === graphTypeFilter) && (!query || node.label.toLocaleLowerCase("ru-RU").includes(query)));
+    return (graph?.nodes ?? []).filter((node) => {
+      const matchesType=graphTypeFilter==="ALL"||node.type===graphTypeFilter;
+      const searchableType=`${node.type} ${graphNodeTypeTitles[node.type]??""}`.toLocaleLowerCase("ru-RU");
+      return matchesType&&(!query||node.label.toLocaleLowerCase("ru-RU").includes(query)||searchableType.includes(query));
+    });
   }, [graph, graphTypeFilter, graphQuery]);
   const visibleGraphEdges = useMemo(() => {
     const keys = new Set(visibleGraphNodes.map(nodeKey));
@@ -734,7 +740,8 @@ function App() {
 
   function submitLabResult(event: React.FormEvent) {
     event.preventDefault();
-    const error = labResultText.length < 10000 ? "Заключение должно содержать не менее 10 000 знаков" : "";
+    const resultLength=labResultText.trim().length;
+    const error = resultLength < 1 || resultLength > 20_000 ? "Заключение должно содержать от 1 до 20 000 знаков" : "";
     setFieldErrors(error ? { resultText: error } : {});
     if (!error) startTransition(() => completeLab().catch(handleFormError));
   }
@@ -1021,8 +1028,8 @@ function App() {
         {activeForm === "labResult" ? (
           <FormDialog title="Заключение эксперта" onClose={closeForm}>
             <form className="entity-form" onSubmit={submitLabResult} noValidate>
-              <FormField label={`Текст заключения · ${labResultText.length}/10 000`} error={fieldErrors.resultText} wide>
-                <textarea rows={12} value={labResultText} onChange={(event) => setLabResultText(event.target.value)} autoFocus />
+              <FormField label={`Текст заключения · ${labResultText.length}/20 000`} error={fieldErrors.resultText} wide>
+                <textarea rows={12} maxLength={20_000} value={labResultText} onChange={(event) => setLabResultText(event.target.value)} autoFocus />
               </FormField>
               <FormActions pending={isPending} onCancel={closeForm} />
             </form>
@@ -1126,19 +1133,16 @@ function App() {
         </section>
 
         <section className="analysis-toolbar" aria-label="Навигация по графу">
-          <div className="analysis-toolbar__title">
-            <strong>Навигация по графу</strong>
-            <span>Показано {visibleGraphNodes.length} из {graph?.nodes.length ?? 0} объектов</span>
-          </div>
-          <label className="graph-search">
+          <div className="graph-search">
             <Search size={17} />
-            <input value={graphQuery} onChange={(event) => setGraphQuery(event.target.value)} placeholder="Найти объект в графе" aria-label="Поиск по графу" />
-          </label>
+            <input value={graphQuery} onChange={(event) => setGraphQuery(event.target.value)} onKeyDown={(event)=>{if(event.key==="Escape")setGraphQuery("");}} placeholder="Название или тип: TASK, EVIDENCE…" aria-label="Поиск по названию или типу объекта" />
+            {graphQuery?<button type="button" className="graph-search-clear" onClick={()=>setGraphQuery("")} title="Очистить поиск" aria-label="Очистить поиск"><X size={14}/></button>:null}
+          </div>
           <label className="graph-type-filter">
-            <span>Тип объекта</span>
-            <select value={graphTypeFilter} onChange={(event) => setGraphTypeFilter(event.target.value)}><option value="ALL">Все типы</option>{Array.from(new Set((graph?.nodes ?? []).map((node) => node.type))).map((type) => <option key={type} value={type}>{type}</option>)}</select>
+            <ListFilter size={16}/><span className="sr-only">Тип объекта</span>
+            <select value={graphTypeFilter} onChange={(event) => setGraphTypeFilter(event.target.value)} aria-label="Тип объекта"><option value="ALL">Все объекты</option>{Array.from(new Set((graph?.nodes ?? []).map((node) => node.type))).map((type) => <option key={type} value={type}>{graphNodeTypeTitles[type]??type}</option>)}</select>
           </label>
-          {graphTypeFilter !== "ALL" || graphQuery ? <button type="button" className="filter-reset" onClick={() => { setGraphTypeFilter("ALL"); setGraphQuery(""); }}><X size={16} /> Очистить</button> : null}
+          {graphTypeFilter !== "ALL" || graphQuery ? <button type="button" className="filter-reset" onClick={() => { setGraphTypeFilter("ALL"); setGraphQuery(""); }} title="Сбросить фильтры" aria-label="Сбросить фильтры"><RotateCcw size={15}/></button> : null}
         </section>
 
         <section className="analysis">

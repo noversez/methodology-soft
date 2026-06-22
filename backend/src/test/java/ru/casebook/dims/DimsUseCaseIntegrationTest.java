@@ -215,10 +215,14 @@ class DimsUseCaseIntegrationTest {
                 .isInstanceOf(ApiException.class)
                 .extracting("code")
                 .isEqualTo("LAB_RESULT_REQUIRED");
-        assertThatThrownBy(() -> labService.complete(lab, request.getId(), "too short"))
+        assertThatThrownBy(() -> labService.complete(lab, request.getId(), "   "))
                 .isInstanceOf(ApiException.class)
                 .extracting("code")
-                .isEqualTo("LAB_RESULT_TOO_SHORT");
+                .isEqualTo("LAB_RESULT_REQUIRED");
+        assertThatThrownBy(() -> labService.complete(lab, request.getId(), "x".repeat(20_001)))
+                .isInstanceOf(ApiException.class)
+                .extracting("code")
+                .isEqualTo("LAB_RESULT_TOO_LONG");
 
         ReportPreviewResponse preview = reportService.preview(caseFile.getId());
         assertThat(preview.hasOpenLabRequests()).isTrue();
@@ -230,7 +234,7 @@ class DimsUseCaseIntegrationTest {
                 .isEqualTo("REPORT_HAS_OPEN_LAB_REQUESTS");
 
         labService.changeStatus(lab, request.getId(), LabRequestStatus.IN_PROGRESS);
-        labService.complete(lab, request.getId(), "x".repeat(10_000));
+        labService.complete(lab, request.getId(), "Заключение готово");
         assertThat(notifications.findByRecipientIdOrderByCreatedAtDesc(detective.getId())).anyMatch(item -> "LAB_RESULT_READY".equals(item.getType()));
         assertThat(auditLogs.findAll()).anyMatch(log -> "LAB_REQUEST_CREATED".equals(log.getAction()) && request.getId().equals(log.getEntityId()));
         ReportFile report = reportService.approve(detective, caseFile.getId(), false);
@@ -282,6 +286,7 @@ class DimsUseCaseIntegrationTest {
 
         assertThat(hypothesis.getId()).isNotNull();
         assertThat(graphService.graph(caseFile.getId()).nodes()).isNotEmpty();
+        assertThat(graphService.graph(caseFile.getId()).nodes()).noneMatch(node -> node.type() == NodeType.CASE);
         assertThat(graphService.graph(caseFile.getId()).nodes()).noneMatch(node -> node.type() == NodeType.HYPOTHESIS);
         assertThat(graphService.graph(caseFile.getId()).graphRevision()).isEqualTo(initialRevision + 1);
         assertThat(edge.getHypothesis()).isNotNull();

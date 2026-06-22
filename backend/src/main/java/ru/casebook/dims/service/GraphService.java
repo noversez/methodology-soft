@@ -44,7 +44,6 @@ public class GraphService {
     public GraphResponse graph(UUID caseId) {
         CaseFile caseFile = cases.findById(caseId).orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "CASE_NOT_FOUND", "Дело не найдено"));
         List<GraphNodeResponse> allNodes = new ArrayList<>();
-        allNodes.add(new GraphNodeResponse(NodeType.CASE, caseFile.getId(), caseFile.getTitle(), caseFile.getStatus().name(), caseFile.getVersion()));
         evidence.findByCaseFileId(caseId).forEach(item -> allNodes.add(new GraphNodeResponse(NodeType.EVIDENCE, item.getId(), item.getName(), item.getStatus().name(), item.getVersion())));
         tasks.findByCaseFileId(caseId).forEach(item -> allNodes.add(new GraphNodeResponse(NodeType.TASK, item.getId(), item.getTitle(), item.getStatus().name(), item.getVersion())));
         labs.findByCaseFileId(caseId).forEach(item -> allNodes.add(new GraphNodeResponse(NodeType.LAB_REQUEST, item.getId(), item.getProfile(), item.getStatus().name(), item.getVersion())));
@@ -52,10 +51,13 @@ public class GraphService {
         scenes.findByCaseFileId(caseId).forEach(item -> allNodes.add(new GraphNodeResponse(NodeType.LOCATION, item.getId(), item.getTitle(), item.getAddress(), 0)));
         boolean filtered = allNodes.size() > GRAPH_NODE_LIMIT;
         List<GraphNodeResponse> displayedNodes = filtered ? allNodes.stream().limit(GRAPH_NODE_LIMIT).toList() : allNodes;
+        java.util.Set<String> displayedKeys=displayedNodes.stream().map(node->node.type()+":"+node.id()).collect(java.util.stream.Collectors.toSet());
 
         return new GraphResponse(
                 displayedNodes,
-                edges.findByCaseFileId(caseId).stream().map(GraphEdgeResponse::from).toList(),
+                edges.findByCaseFileId(caseId).stream()
+                        .filter(edge->displayedKeys.contains(edge.getSourceType()+":"+edge.getSourceId())&&displayedKeys.contains(edge.getTargetType()+":"+edge.getTargetId()))
+                        .map(GraphEdgeResponse::from).toList(),
                 filtered,
                 filtered ? "Граф превышает 200 узлов, отображение ограничено для производительности" : null,
                 caseFile.getGraphRevision()

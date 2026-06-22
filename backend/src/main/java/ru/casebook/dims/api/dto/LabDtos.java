@@ -2,6 +2,7 @@ package ru.casebook.dims.api.dto;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import ru.casebook.dims.domain.LabRequest;
 import ru.casebook.dims.domain.LabRequestStatus;
 
@@ -22,7 +23,7 @@ public final class LabDtos {
     public record LabStatusRequest(@NotNull LabRequestStatus status) {
     }
 
-    public record LabResultRequest(@NotBlank String resultText) {
+    public record LabResultRequest(@NotBlank @Size(max = 20_000) String resultText) {
     }
 
     public record LabResponse(
