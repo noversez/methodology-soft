@@ -42,6 +42,7 @@ public final class TaskDtos {
     public record TaskResponse(
             UUID id,
             UUID caseId,
+            String registrationNumber,
             String title,
             String description,
             UUID assigneeId,
@@ -59,6 +60,7 @@ public final class TaskDtos {
             return new TaskResponse(
                     item.getId(),
                     item.getCaseFile().getId(),
+                    item.getRegistrationNumber(),
                     item.getTitle(),
                     item.getDescription(),
                     item.getAssignee().getId(),

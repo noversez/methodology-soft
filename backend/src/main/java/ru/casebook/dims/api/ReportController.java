@@ -15,10 +15,12 @@ import org.springframework.http.*;
 public class ReportController {
     private final ReportService reportService;
     private final CurrentUserService currentUserService;
+    private final ru.casebook.dims.service.EntityDeletionService deletionService;
 
-    public ReportController(ReportService reportService, CurrentUserService currentUserService) {
+    public ReportController(ReportService reportService, CurrentUserService currentUserService, ru.casebook.dims.service.EntityDeletionService deletionService) {
         this.reportService = reportService;
         this.currentUserService = currentUserService;
+        this.deletionService = deletionService;
     }
 
     @PostMapping("/api/cases/{caseId}/reports/preview")
@@ -48,4 +50,5 @@ public class ReportController {
         return ResponseEntity.ok().contentType(MediaType.parseMediaType(file.mediaType()+"; charset=UTF-8"))
                 .header(HttpHeaders.CONTENT_DISPOSITION,"attachment; filename=\""+file.fileName()+"\"").body(file.content());
     }
+    @DeleteMapping("/api/reports/{id}") @ResponseStatus(HttpStatus.NO_CONTENT) public void delete(@RequestHeader("X-User-Id") String userId,@PathVariable UUID id){deletionService.deleteReport(currentUserService.requireUser(userId),id);}
 }

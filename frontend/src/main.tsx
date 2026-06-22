@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useTransition } from "react";
+import React, { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Activity,
@@ -9,9 +9,13 @@ import {
   ClipboardList,
   FileText,
   Loader2,
+  Maximize2,
+  Minimize2,
   Moon,
+  Pencil,
   Plus,
   RadioTower,
+  Search,
   Shield,
   Sun,
   X,
@@ -27,7 +31,8 @@ type CaseFile = { id: string; registrationNumber: string; title: string; openedA
 type IncidentScene = { id: string; caseId: string; title: string; description: string; address: string; latitude?: number; longitude?: number; createdAt: string };
 type Interview = { id: string; caseId: string; interviewee: string; occurredAt: string; protocolText: string; createdAt: string };
 type Evidence = { id: string; caseId: string; registrationNumber: string; name: string; type: string; importance: string; description: string; discoveryDateTime: string; latitude?: number; longitude?: number; locationTitle?: string; status: string };
-type TaskItem = { id: string; caseId: string; title: string; description: string; assigneeId: string; priority: string; deadline: string; status: string; resultText?: string; resultEvidenceId?: string };
+type TaskItem = { id: string; caseId: string; registrationNumber: string; title: string; description: string; assigneeId: string; priority: string; deadline: string; status: string; resultText?: string; resultEvidenceId?: string };
+type NotificationItem = { id: string; type: string; payloadJson: string; readAt?: string; createdAt: string };
 type LabRequest = { id: string; caseId: string; registrationNumber: string; evidenceId: string; profile: string; questions: string; desiredDueDate: string; status: string; requesterId: string; labAssigneeId?: string; resultText?: string };
 type Graph = { nodes: { type: string; id: string; label: string; status: string; version: number }[]; edges: { id: string; source: { type: string; id: string }; target: { type: string; id: string }; semanticType: string; confidence: string; hypothesisTitle?: string; hypothesisText?: string }[]; filtered: boolean; warning?: string; graphRevision: number };
 type ReportPreview = { content: string; hasOpenLabRequests: boolean; warning?: string };
@@ -35,7 +40,7 @@ type ReportFile = { id: string; registrationNumber: string; status: string; form
 type FormKind = "case" | "scene" | "interview" | "evidence" | "task" | "lab" | "labResult" | "edge" | "agentResult";
 type FieldErrors = Record<string, string>;
 type ApiErrorBody = { code?: string; message?: string; details?: Record<string, unknown> };
-type CaseDraft = { title: string; openedAt: string; priority: string; description: string };
+type CaseDraft = { title: string; openedAt: string; priority: string; status: string; description: string };
 type SceneDraft = { title: string; description: string; address: string; latitude: string; longitude: string };
 type InterviewDraft = { interviewee: string; occurredAt: string; protocolText: string };
 type EvidenceDraft = { name: string; type: string; importance: string; description: string; discoveryDateTime: string; locationTitle: string; latitude: string; longitude: string };
@@ -45,10 +50,13 @@ type LabDraft = { evidenceId: string; profile: string; questions: string; desire
 type EdgeDraft = { source: string; target: string; semanticType: string; confidence: string; hypothesisTitle: string; hypothesisText: string };
 type GraphNode = Graph["nodes"][number];
 
+const roleTitles: Record<Role,string> = {DETECTIVE:"Ведущий детектив",ASSISTANT:"Ассистент",INSPECTOR:"Инспектор",AGENT:"Полевой агент",LAB_ANALYST:"Эксперт лаборатории",ADMIN:"Администратор"};
+
 const emptyCaseDraft = (): CaseDraft => ({
   title: "",
   openedAt: new Date().toISOString().slice(0, 16),
   priority: "MEDIUM",
+  status: "NEW",
   description: "",
 });
 const emptySceneDraft = (): SceneDraft => ({ title: "", description: "", address: "", latitude: "", longitude: "" });
@@ -122,6 +130,7 @@ async function request<T>(path: string, userId?: string, init: RequestInit = {})
         const error: ApiErrorBody = await response.json().catch(() => ({ message: "Ошибка запроса" }));
         throw new ApiRequestError(error.message ?? "Ошибка запроса", error.code, error.details);
       }
+      if (response.status === 204) return undefined as T;
       return response.json();
     } catch (error) {
       if (error instanceof ApiRequestError) throw error;
@@ -158,6 +167,8 @@ function App() {
   const [evidence, setEvidence] = useState<Evidence[]>([]);
   const [scenes, setScenes] = useState<IncidentScene[]>([]);
   const [interviews, setInterviews] = useState<Interview[]>([]);
+  const [participants, setParticipants] = useState<User[]>([]);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [myTasks, setMyTasks] = useState<TaskItem[]>([]);
   const [labs, setLabs] = useState<LabRequest[]>([]);
@@ -181,6 +192,12 @@ function App() {
   const [labDraft, setLabDraft] = useState<LabDraft>(emptyLabDraft);
   const [edgeDraft, setEdgeDraft] = useState<EdgeDraft>(emptyEdgeDraft);
   const [connectSelection, setConnectSelection] = useState<string[]>([]);
+  const [graphBoardHeight, setGraphBoardHeight] = useState(430);
+  const [graphNodeScale, setGraphNodeScale] = useState(1);
+  const [graphNodePositions, setGraphNodePositions] = useState<Record<string,{x:number;y:number}>>({});
+  const graphCanvasRef = useRef<HTMLDivElement | null>(null);
+  const graphDragRef = useRef<{key:string;pointerId:number;startX:number;startY:number;originX:number;originY:number;moved:boolean}|null>(null);
+  const draggedGraphNodeRef = useRef("");
   const [resultPhoto, setResultPhoto] = useState<File | null>(null);
   const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
   const [activeLabId, setActiveLabId] = useState("");
@@ -188,6 +205,10 @@ function App() {
   const [labResultText, setLabResultText] = useState("");
   const [editingTaskId, setEditingTaskId] = useState("");
   const [editingEvidenceId, setEditingEvidenceId] = useState("");
+  const [editingCaseId, setEditingCaseId] = useState("");
+  const [editingSceneId, setEditingSceneId] = useState("");
+  const [editingInterviewId, setEditingInterviewId] = useState("");
+  const [editingLabId, setEditingLabId] = useState("");
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [isOnline, setIsOnline] = useState(() => navigator.onLine);
   const [isPending, startTransition] = useTransition();
@@ -216,13 +237,14 @@ function App() {
   }
 
   async function loadCaseDetails(caseId: string) {
-    const [loadedEvidence, loadedTasks, loadedGraph, loadedScenes, loadedLabs, loadedInterviews] = await Promise.all([
+    const [loadedEvidence, loadedTasks, loadedGraph, loadedScenes, loadedLabs, loadedInterviews, loadedParticipants] = await Promise.all([
       request<Evidence[]>(`/cases/${caseId}/evidence`),
       request<TaskItem[]>(`/cases/${caseId}/tasks`),
       request<Graph>(`/cases/${caseId}/graph`),
       request<IncidentScene[]>(`/cases/${caseId}/scenes`),
       request<LabRequest[]>(`/cases/${caseId}/lab-requests`),
       request<Interview[]>(`/cases/${caseId}/interviews`),
+      request<User[]>(`/cases/${caseId}/participants`),
     ]);
     setEvidence(loadedEvidence);
     setTasks(loadedTasks);
@@ -230,6 +252,7 @@ function App() {
     setScenes(loadedScenes);
     setLabs(loadedLabs);
     setInterviews(loadedInterviews);
+    setParticipants(loadedParticipants);
   }
 
   async function authenticate(event: React.FormEvent) {
@@ -261,6 +284,7 @@ function App() {
 
   useEffect(() => {
     if (!userId || !currentUser) return;
+    request<NotificationItem[]>("/notifications",userId).then(setNotifications).catch((error)=>setMessage(error.message));
     if (currentUser.role === "AGENT" || currentUser.role === "ASSISTANT") {
       request<TaskItem[]>("/tasks/my", userId).then(setMyTasks).catch((error) => setMessage(error.message));
     } else {
@@ -287,12 +311,12 @@ function App() {
     };
   }, []);
 
-  const assignees = users.filter((user) => user.role === "AGENT" || user.role === "ASSISTANT");
+  const assignees = participants.filter((user) => user.role === "AGENT" || user.role === "ASSISTANT");
 
   async function createCase(draft: CaseDraft) {
     if (!userId) throw new ApiRequestError("Сеанс входа не получен. Войдите в систему повторно", "AUTH_REQUIRED");
-    const created = await request<CaseFile>("/cases", userId, {
-      method: "POST",
+    const created = await request<CaseFile>(editingCaseId ? `/cases/${editingCaseId}` : "/cases", userId, {
+      method: editingCaseId ? "PATCH" : "POST",
       body: JSON.stringify({
         ...draft,
         title: draft.title.trim(),
@@ -300,11 +324,12 @@ function App() {
         openedAt: new Date(draft.openedAt).toISOString(),
       }),
     });
-    setCases((items) => [created, ...items]);
+    setCases((items) => editingCaseId ? items.map((item) => item.id === created.id ? created : item) : [created, ...items]);
     setSelectedCaseId(created.id);
     setCaseDraft(emptyCaseDraft());
+    setEditingCaseId("");
     setActiveForm(null);
-    setMessage(`Создано дело ${created.registrationNumber}`);
+    setMessage(editingCaseId ? `Дело ${created.registrationNumber} изменено` : `Создано дело ${created.registrationNumber}`);
   }
 
   async function createEvidence(draft: EvidenceDraft) {
@@ -342,9 +367,10 @@ function App() {
 
   function closeForm() {
     setFieldErrors({});
-    if (activeForm === "case") setCaseDraft(emptyCaseDraft());
-    if (activeForm === "scene") setSceneDraft(emptySceneDraft());
-    if (activeForm === "interview") setInterviewDraft(emptyInterviewDraft());
+    if (activeForm === "case") { setCaseDraft(emptyCaseDraft()); setEditingCaseId(""); }
+    if (activeForm === "scene") { setSceneDraft(emptySceneDraft()); setEditingSceneId(""); }
+    if (activeForm === "interview") { setInterviewDraft(emptyInterviewDraft()); setEditingInterviewId(""); }
+    if (activeForm === "lab") { setLabDraft(emptyLabDraft()); setEditingLabId(""); }
     if (activeForm === "evidence") { setEvidenceDraft(emptyEvidenceDraft()); setEvidenceFile(null); setEditingEvidenceId(""); }
     setActiveForm(null);
     if (activeForm === "edge") setConnectSelection([]);
@@ -375,6 +401,39 @@ function App() {
     setActiveForm("edge");
   }
 
+  function graphNodePosition(node: GraphNode,index: number) {
+    return graphNodePositions[nodeKey(node)] ?? {x:nodePoint(index).x/10,y:nodePoint(index).y/4.3};
+  }
+
+  function startGraphNodeDrag(event: React.PointerEvent<HTMLButtonElement>,node: GraphNode,index: number) {
+    if(event.button!==0)return;
+    const position=graphNodePosition(node,index);
+    graphDragRef.current={key:nodeKey(node),pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,originX:position.x,originY:position.y,moved:false};
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function moveGraphNode(event: React.PointerEvent<HTMLButtonElement>) {
+    const drag=graphDragRef.current; const canvas=graphCanvasRef.current;
+    if(!drag||drag.pointerId!==event.pointerId||!canvas)return;
+    const rect=canvas.getBoundingClientRect(); const dx=event.clientX-drag.startX; const dy=event.clientY-drag.startY;
+    if(Math.abs(dx)+Math.abs(dy)>4)drag.moved=true;
+    if(!drag.moved)return;
+    setGraphNodePositions((positions)=>({...positions,[drag.key]:{x:Math.min(94,Math.max(6,drag.originX+dx/rect.width*100)),y:Math.min(92,Math.max(8,drag.originY+dy/rect.height*100))}}));
+  }
+
+  function finishGraphNodeDrag(event: React.PointerEvent<HTMLButtonElement>) {
+    const drag=graphDragRef.current;
+    if(!drag||drag.pointerId!==event.pointerId)return;
+    if(drag.moved)draggedGraphNodeRef.current=drag.key;
+    graphDragRef.current=null;
+    if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId);
+  }
+
+  function activateGraphNode(node: GraphNode) {
+    if(draggedGraphNodeRef.current===nodeKey(node)){draggedGraphNodeRef.current="";return;}
+    selectGraphNode(node);
+  }
+
   function openAgentResult(task: TaskItem) {
     setFieldErrors({});
     setAgentResultDraft((draft) => ({ ...draft, taskId: task.id, evidenceName: draft.taskId === task.id ? draft.evidenceName : task.title }));
@@ -397,6 +456,45 @@ function App() {
     setEvidenceDraft({ name: item.name, type: item.type, importance: item.importance, description: item.description, discoveryDateTime: new Date(item.discoveryDateTime).toISOString().slice(0, 16), locationTitle: item.locationTitle ?? "", latitude: item.latitude?.toString() ?? "", longitude: item.longitude?.toString() ?? "" });
     setEvidenceFile(null);
     openForm("evidence");
+  }
+
+  function editCase(item: CaseFile) {
+    setEditingCaseId(item.id);
+    setCaseDraft({ title:item.title, openedAt:new Date(item.openedAt).toISOString().slice(0,16), priority:item.priority, status:item.status, description:item.description });
+    openForm("case");
+  }
+
+  function editScene(item: IncidentScene) {
+    setEditingSceneId(item.id);
+    setSceneDraft({ title:item.title, description:item.description, address:item.address, latitude:item.latitude?.toString() ?? "", longitude:item.longitude?.toString() ?? "" });
+    openForm("scene");
+  }
+
+  function editInterview(item: Interview) {
+    setEditingInterviewId(item.id);
+    setInterviewDraft({ interviewee:item.interviewee, occurredAt:new Date(item.occurredAt).toISOString().slice(0,16), protocolText:item.protocolText });
+    openForm("interview");
+  }
+
+  function editLab(item: LabRequest) {
+    setEditingLabId(item.id);
+    setLabDraft({ evidenceId:item.evidenceId, profile:item.profile, questions:item.questions, desiredDueDate:new Date(item.desiredDueDate).toISOString().slice(0,16) });
+    openForm("lab");
+  }
+
+  async function deleteEntity(path: string, label: string, after?: () => void) {
+    if (!userId || !window.confirm(`Удалить «${label}»? Действие нельзя отменить.`)) return;
+    await request(path,userId,{method:"DELETE"});
+    after?.();
+    setMessage(`Удалено: ${label}`);
+    if (selectedCaseId) await loadCaseDetails(selectedCaseId).catch(() => undefined);
+  }
+
+  async function deleteCase(item: CaseFile) {
+    if (!userId || !window.confirm(`Удалить дело ${item.registrationNumber} и все связанные материалы? Действие нельзя отменить.`)) return;
+    await request(`/cases/${item.id}`,userId,{method:"DELETE"});
+    const remaining=cases.filter((candidate)=>candidate.id!==item.id);
+    setCases(remaining); setSelectedCaseId(remaining[0]?.id ?? ""); setMessage(`Дело ${item.registrationNumber} удалено`);
   }
 
   function handleFormError(error: unknown) {
@@ -440,11 +538,12 @@ function App() {
     if (Object.keys(visibleErrors).length || !selectedCaseId || !userId) return;
     startTransition(async () => {
       try {
-        const created = await request<IncidentScene>(`/cases/${selectedCaseId}/scenes`, userId, { method: "POST", body: JSON.stringify({ ...sceneDraft, latitude: sceneDraft.latitude ? Number(sceneDraft.latitude) : null, longitude: sceneDraft.longitude ? Number(sceneDraft.longitude) : null }) });
-        setScenes((items) => [created, ...items]);
+        const created = await request<IncidentScene>(editingSceneId ? `/cases/${selectedCaseId}/scenes/${editingSceneId}` : `/cases/${selectedCaseId}/scenes`, userId, { method: editingSceneId ? "PATCH" : "POST", body: JSON.stringify({ ...sceneDraft, latitude: sceneDraft.latitude ? Number(sceneDraft.latitude) : null, longitude: sceneDraft.longitude ? Number(sceneDraft.longitude) : null }) });
+        setScenes((items) => editingSceneId ? items.map((item)=>item.id===created.id?created:item) : [created, ...items]);
         setSceneDraft(emptySceneDraft());
+        setEditingSceneId("");
         setActiveForm(null);
-        setMessage("Место происшествия зафиксировано");
+        setMessage(editingSceneId ? "Место происшествия изменено" : "Место происшествия зафиксировано");
       } catch (error) { handleFormError(error); }
     });
   }
@@ -454,7 +553,7 @@ function App() {
     const errors = { interviewee: required(interviewDraft.interviewee, "Опрашиваемый"), occurredAt: required(interviewDraft.occurredAt, "Дата"), protocolText: required(interviewDraft.protocolText, "Протокол") };
     const visibleErrors = Object.fromEntries(Object.entries(errors).filter(([, value]) => value)); setFieldErrors(visibleErrors);
     if (Object.keys(visibleErrors).length || !selectedCaseId || !userId) return;
-    startTransition(async () => { try { const created=await request<Interview>(`/cases/${selectedCaseId}/interviews`,userId,{method:"POST",body:JSON.stringify({...interviewDraft,occurredAt:new Date(interviewDraft.occurredAt).toISOString()})}); setInterviews((items)=>[...items,created]); setInterviewDraft(emptyInterviewDraft()); setActiveForm(null); setMessage("Протокол интервью сохранен"); } catch(error){handleFormError(error);} });
+    startTransition(async () => { try { const created=await request<Interview>(editingInterviewId?`/cases/${selectedCaseId}/interviews/${editingInterviewId}`:`/cases/${selectedCaseId}/interviews`,userId,{method:editingInterviewId?"PATCH":"POST",body:JSON.stringify({...interviewDraft,occurredAt:new Date(interviewDraft.occurredAt).toISOString()})}); setInterviews((items)=>editingInterviewId?items.map((item)=>item.id===created.id?created:item):[...items,created]); setInterviewDraft(emptyInterviewDraft()); setEditingInterviewId(""); setActiveForm(null); setMessage(editingInterviewId?"Интервью изменено":"Протокол интервью сохранен"); } catch(error){handleFormError(error);} });
   }
 
   function submitEvidence(event: React.FormEvent) {
@@ -592,19 +691,20 @@ function App() {
 
   async function createLabRequest() {
     if (!userId || !labDraft.evidenceId) return;
-    const created = await request<LabRequest>(`/evidence/${labDraft.evidenceId}/lab-requests`, userId, {
-      method: "POST",
+    const created = await request<LabRequest>(editingLabId ? `/lab-requests/${editingLabId}` : `/evidence/${labDraft.evidenceId}/lab-requests`, userId, {
+      method: editingLabId ? "PATCH" : "POST",
       body: JSON.stringify({
         profile: labDraft.profile.trim(),
         questions: labDraft.questions.trim(),
         desiredDueDate: new Date(labDraft.desiredDueDate).toISOString(),
       }),
     });
-    setLabs((items) => [created, ...items]);
+    setLabs((items) => editingLabId ? items.map((item)=>item.id===created.id?created:item) : [created, ...items]);
     setDuplicateLabId("");
     setLabDraft(emptyLabDraft());
+    setEditingLabId("");
     setActiveForm(null);
-    setMessage("Лабораторный запрос направлен");
+    setMessage(editingLabId ? "Лабораторный запрос изменен" : "Лабораторный запрос направлен");
   }
 
   async function createGraphEdge() {
@@ -635,6 +735,15 @@ function App() {
   function createTaskFromHypothesis(edge: Graph["edges"][number]) {
     setTaskDraft({ ...emptyTaskDraft(), title: `Проверить гипотезу: ${edge.hypothesisTitle ?? edge.semanticType}`, description: edge.hypothesisText ?? `Проверить связь «${edge.semanticType}»` });
     openForm("task");
+  }
+
+  async function deleteGraphEdge(edge: Graph["edges"][number]) {
+    if(!userId||!selectedCaseId||!graph)return;
+    if(!window.confirm(`Удалить связь «${edge.semanticType}» и связанную гипотезу?`))return;
+    await request(`/cases/${selectedCaseId}/graph/edges/${edge.id}?expectedGraphRevision=${graph.graphRevision}`,userId,{method:"DELETE"});
+    setMessage("Связь удалена из графа");
+    setConnectSelection([]);
+    await loadCaseDetails(selectedCaseId);
   }
 
   async function generateReport(force: boolean | null = null) {
@@ -700,7 +809,10 @@ function App() {
             <span>Casebook Holmes</span>
           </div>
         </div>
-        <div className="field"><span>Пользователь</span><strong>{currentUser.displayName}</strong><small>{currentUser.role}</small></div>
+        <div className="user-profile">
+          <div className="user-avatar" aria-hidden="true">{currentUser.displayName.split(" ").map((part)=>part[0]).slice(0,2).join("")}</div>
+          <div className="user-profile__body"><span>Пользователь</span><strong>{currentUser.displayName}</strong><small>{roleTitles[currentUser.role]}</small><b className={`role-badge role-${currentUser.role.toLowerCase()}`}>{currentUser.role}</b></div>
+        </div>
         <label className="field">
           Дело
           <select value={selectedCaseId} onChange={(event) => setSelectedCaseId(event.target.value)}>
@@ -724,9 +836,8 @@ function App() {
             <h1>{selectedCase?.title ?? "DIMS"}</h1>
             <p>{selectedCase?.description ?? "Единая среда расследования"}</p>
           </div>
-          <div className="status">
-            <RadioTower size={18} />
-            {isPending ? "Синхронизация" : "REST/JSON online"}
+          <div className={`status-icon ${isOnline?"is-online":"is-offline"}`} role="status" aria-label={isPending?"Синхронизация данных":isOnline?"Сетевое подключение доступно":"Сетевое подключение отсутствует"} title={isPending?"Синхронизация данных":isOnline?"Сеть доступна":"Сеть недоступна"}>
+            {isPending ? <Loader2 className="spin" size={18}/> : <RadioTower size={18}/>}
           </div>
         </header>
 
@@ -751,7 +862,7 @@ function App() {
         {!isOnline ? <div className="warning" role="alert">{NETWORK_MESSAGE}</div> : null}
 
         {activeForm === "case" ? (
-          <FormDialog title="Новое дело" onClose={closeForm}>
+          <FormDialog title={editingCaseId ? "Изменить дело" : "Новое дело"} onClose={closeForm}>
             <form className="entity-form" onSubmit={submitCase} noValidate>
               <FormField label="Название" error={fieldErrors.title}>
                 <input value={caseDraft.title} onChange={(event) => setCaseDraft((draft) => ({ ...draft, title: event.target.value }))} autoFocus />
@@ -764,6 +875,7 @@ function App() {
                   <option value="LOW">Низкий</option><option value="MEDIUM">Средний</option><option value="HIGH">Высокий</option>
                 </select>
               </FormField>
+              {editingCaseId ? <FormField label="Статус"><select value={caseDraft.status} onChange={(event)=>setCaseDraft((draft)=>({...draft,status:event.target.value}))}><option value="NEW">Новое</option><option value="IN_PROGRESS">В работе</option><option value="CLOSED">Закрыто</option></select></FormField> : null}
               <FormField label="Описание" error={fieldErrors.description} wide>
                 <textarea value={caseDraft.description} onChange={(event) => setCaseDraft((draft) => ({ ...draft, description: event.target.value }))} rows={4} />
               </FormField>
@@ -843,10 +955,10 @@ function App() {
         ) : null}
 
         {activeForm === "lab" ? (
-          <FormDialog title="Запрос на экспертизу" onClose={closeForm}>
+          <FormDialog title={editingLabId ? "Изменить запрос на экспертизу" : "Запрос на экспертизу"} onClose={closeForm}>
             <form className="entity-form" onSubmit={submitLab} noValidate>
               <FormField label="Дело"><input value={selectedCase ? `${selectedCase.registrationNumber} · ${selectedCase.title}` : ""} readOnly /></FormField>
-              <FormField label="Улика" error={fieldErrors.evidenceId}><select value={labDraft.evidenceId} onChange={(event) => setLabDraft((draft) => ({ ...draft, evidenceId: event.target.value }))}><option value="">Выберите</option>{evidence.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></FormField>
+              <FormField label="Улика" error={fieldErrors.evidenceId}><select value={labDraft.evidenceId} disabled={Boolean(editingLabId)} onChange={(event) => setLabDraft((draft) => ({ ...draft, evidenceId: event.target.value }))}><option value="">Выберите</option>{evidence.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></FormField>
               <FormField label="Данные улики" wide><input value={evidence.find((item) => item.id === labDraft.evidenceId)?.description ?? "Выберите улику"} readOnly /></FormField>
               <FormField label="Профиль экспертизы" error={fieldErrors.profile}><input value={labDraft.profile} onChange={(event) => setLabDraft((draft) => ({ ...draft, profile: event.target.value }))} autoFocus /></FormField>
               <FormField label="Желаемый срок" error={fieldErrors.desiredDueDate}><input type="datetime-local" min={new Date().toISOString().slice(0, 16)} value={labDraft.desiredDueDate} onChange={(event) => setLabDraft((draft) => ({ ...draft, desiredDueDate: event.target.value }))} /></FormField>
@@ -910,10 +1022,11 @@ function App() {
         <section className="grid">
           <Panel title="Дела" count={cases.length}>
             {cases.map((item) => (
-              <button className="row" key={item.id} onClick={() => setSelectedCaseId(item.id)}>
-                <strong>{item.registrationNumber}</strong>
+              <article className={`row${item.id===selectedCaseId?" active-row":""}`} key={item.id}>
+                <button className="row-select" onClick={() => setSelectedCaseId(item.id)}><strong>{item.registrationNumber}</strong></button>
                 <span>{item.status} · {item.priority}</span>
-              </button>
+                {currentUser?.role==="DETECTIVE"?<WindowActions onEdit={()=>editCase(item)} onDelete={()=>startTransition(()=>deleteCase(item).catch(handleFormError))}/>:null}
+              </article>
             ))}
           </Panel>
           <Panel title="Улики" count={evidence.length}>
@@ -921,30 +1034,33 @@ function App() {
               <article className="row" key={item.id}>
                 <strong>{item.name}</strong>
                 <span>{item.type} · {item.status}</span>
-                {currentUser?.role === "DETECTIVE" || currentUser?.role === "ASSISTANT" || currentUser?.role === "INSPECTOR" ? <button className="result-action" onClick={() => editEvidence(item)}>Изменить</button> : null}
+                <WindowActions onEdit={currentUser?.role === "DETECTIVE" || currentUser?.role === "ASSISTANT" || currentUser?.role === "INSPECTOR" ? ()=>editEvidence(item) : undefined} onDelete={currentUser?.role==="DETECTIVE" ? ()=>startTransition(()=>deleteEntity(`/evidence/${item.id}`,item.name).catch(handleFormError)) : undefined}/>
               </article>
             ))}
           </Panel>
           <Panel title="Места происшествия" count={scenes.length}>
-            {scenes.map((item) => <article className="row" key={item.id}><strong>{item.title}</strong><span>{item.address}</span></article>)}
+            {scenes.map((item) => <article className="row" key={item.id}><strong>{item.title}</strong><span>{item.address}</span>{currentUser?.role==="DETECTIVE"?<WindowActions onEdit={()=>editScene(item)} onDelete={()=>startTransition(()=>deleteEntity(`/cases/${selectedCaseId}/scenes/${item.id}`,item.title).catch(handleFormError))}/>:null}</article>)}
           </Panel>
           <Panel title="Интервью" count={interviews.length}>
-            {interviews.map((item)=><article className="row" key={item.id}><strong>{item.interviewee}</strong><span>{new Date(item.occurredAt).toLocaleString("ru-RU")}</span><small>{item.protocolText}</small></article>)}
+            {interviews.map((item)=><article className="row" key={item.id}><strong>{item.interviewee}</strong><span>{new Date(item.occurredAt).toLocaleString("ru-RU")}</span><small>{item.protocolText}</small>{currentUser?.role==="DETECTIVE"?<WindowActions onEdit={()=>editInterview(item)} onDelete={()=>startTransition(()=>deleteEntity(`/cases/${selectedCaseId}/interviews/${item.id}`,item.interviewee).catch(handleFormError))}/>:null}</article>)}
           </Panel>
           <Panel title={currentUser?.role === "AGENT" || currentUser?.role === "ASSISTANT" ? "Мои задачи" : "Задачи"} count={visibleTasks.length}>
             {visibleTasks.map((item) => (
               <article className="row" key={item.id}>
-                <strong>{item.title}</strong>
+                <strong>{item.registrationNumber} · {item.title}</strong>
                 <span>{item.status} · {new Date(item.deadline).toLocaleDateString("ru-RU")}</span>
                 {(currentUser?.role === "AGENT" || currentUser?.role === "ASSISTANT") && item.status !== "DONE" ? (
                   <div className="row-actions">
                     {item.status === "ASSIGNED" ? <button className="result-action" onClick={() => startTransition(() => changeTaskStatus(item, "IN_PROGRESS").catch(handleFormError))}>Принять в работу</button> : null}
-                    <button className="result-action" onClick={() => openAgentResult(item)}><Camera size={16} /> Передать результат</button>
+                    {item.status === "IN_PROGRESS" ? <button className="result-action" onClick={() => openAgentResult(item)}><Camera size={16} /> Передать результат</button> : null}
                   </div>
                 ) : null}
-                {currentUser?.role === "DETECTIVE" && item.status !== "DONE" ? <button className="result-action" onClick={() => editTask(item)}>Переназначить</button> : null}
+                {currentUser?.role === "DETECTIVE" ? <WindowActions onEdit={item.status !== "DONE" ? ()=>editTask(item) : undefined} onDelete={()=>startTransition(()=>deleteEntity(`/tasks/${item.id}`,item.title).catch(handleFormError))}/> : null}
               </article>
             ))}
+          </Panel>
+          <Panel title="Уведомления" count={notifications.length}>
+            {notifications.map((item)=><article className="row" key={item.id}><strong>{item.type === "TASK_ASSIGNED" ? "Назначена новая задача" : item.type === "TASK_REASSIGNED" ? "Задача переназначена вам" : item.type}</strong><span>{new Date(item.createdAt).toLocaleString("ru-RU")}</span></article>)}
           </Panel>
           <Panel title={currentUser?.role === "LAB_ANALYST" ? "Моя очередь" : "Лаборатория"} count={visibleLabs.length}>
             {visibleLabs.map((item) => (
@@ -953,24 +1069,48 @@ function App() {
                 <span>{item.status} · до {new Date(item.desiredDueDate).toLocaleDateString("ru-RU")}</span>
                 {currentUser?.role === "LAB_ANALYST" && item.status === "CREATED" ? <button className="result-action" onClick={() => startTransition(() => changeLabStatus(item.id).catch(handleFormError))}>Принять в работу</button> : null}
                 {currentUser?.role === "LAB_ANALYST" && item.status !== "COMPLETED" ? <button className="result-action" onClick={() => { setActiveLabId(item.id); setFieldErrors({}); setActiveForm("labResult"); }}>Внести заключение</button> : null}
+                {currentUser?.role === "DETECTIVE" ? <WindowActions onEdit={item.status!=="COMPLETED" ? ()=>editLab(item) : undefined} onDelete={()=>startTransition(()=>deleteEntity(`/lab-requests/${item.id}`,item.registrationNumber).catch(handleFormError))}/> : null}
               </article>
             ))}
           </Panel>
+        </section>
+
+        <section className="analysis-toolbar" aria-label="Навигация по графу">
+          <div className="analysis-toolbar__title">
+            <strong>Навигация по графу</strong>
+            <span>Показано {visibleGraphNodes.length} из {graph?.nodes.length ?? 0} объектов</span>
+          </div>
+          <label className="graph-search">
+            <Search size={17} />
+            <input value={graphQuery} onChange={(event) => setGraphQuery(event.target.value)} placeholder="Найти объект в графе" aria-label="Поиск по графу" />
+          </label>
+          <label className="graph-type-filter">
+            <span>Тип объекта</span>
+            <select value={graphTypeFilter} onChange={(event) => setGraphTypeFilter(event.target.value)}><option value="ALL">Все типы</option>{Array.from(new Set((graph?.nodes ?? []).map((node) => node.type))).map((type) => <option key={type} value={type}>{type}</option>)}</select>
+          </label>
+          {graphTypeFilter !== "ALL" || graphQuery ? <button type="button" className="filter-reset" onClick={() => { setGraphTypeFilter("ALL"); setGraphQuery(""); }}><X size={16} /> Очистить</button> : null}
         </section>
 
         <section className="analysis">
           <div className="graph-panel">
             <div className="panel-heading">
               <h2>Граф связей</h2>
-              <span>{visibleGraphNodes.length}/{graph?.nodes.length ?? 0} узлов · {visibleGraphEdges.length} связей</span>
+              <div className="graph-view-controls">
+                <span>{visibleGraphNodes.length}/{graph?.nodes.length ?? 0} узлов · {visibleGraphEdges.length} связей</span>
+                <div className="graph-control-group" aria-label="Размер доски">
+                  <small>Доска</small>
+                  <button type="button" onClick={() => setGraphBoardHeight((height) => Math.max(320, height - 160))} disabled={graphBoardHeight <= 320} title="Уменьшить доску" aria-label="Уменьшить доску"><Minimize2 size={15} /></button>
+                  <button type="button" onClick={() => setGraphBoardHeight((height) => Math.min(1200, height + 160))} disabled={graphBoardHeight >= 1200} title="Увеличить доску" aria-label="Увеличить доску"><Maximize2 size={15} /></button>
+                </div>
+                <div className="graph-control-group" aria-label="Размер карточек">
+                  <small>Карточки</small>
+                  <button type="button" onClick={() => setGraphNodeScale((scale) => Math.max(0.65, Number((scale - 0.15).toFixed(2))))} disabled={graphNodeScale <= 0.65} title="Уменьшить карточки" aria-label="Уменьшить карточки">−</button>
+                  <button type="button" onClick={() => setGraphNodeScale((scale) => Math.min(1.1, Number((scale + 0.15).toFixed(2))))} disabled={graphNodeScale >= 1.1} title="Увеличить карточки" aria-label="Увеличить карточки">+</button>
+                </div>
+              </div>
             </div>
             {graph?.warning && <div className="warning">{graph.warning}</div>}
-            <div className="graph-filters">
-              <label>Ветка<select value={graphTypeFilter} onChange={(event) => setGraphTypeFilter(event.target.value)}><option value="ALL">Все сущности</option>{Array.from(new Set((graph?.nodes ?? []).map((node) => node.type))).map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
-              <label>Поиск<input value={graphQuery} onChange={(event) => setGraphQuery(event.target.value)} placeholder="Название узла" /></label>
-              <button type="button" className="result-action" onClick={() => { setGraphTypeFilter("ALL"); setGraphQuery(""); }}>Сбросить</button>
-            </div>
-            <div className={`graph-canvas${connectSelection.length ? " has-selection" : ""}`}>
+            <div ref={graphCanvasRef} className={`graph-canvas${connectSelection.length ? " has-selection" : ""}`} style={{ height: graphBoardHeight }}>
               {connectSelection.length ? (
                 <div className="connect-hint">
                   <strong>Выберите второй блок · повторный клик отменит выбор</strong>
@@ -982,18 +1122,22 @@ function App() {
                   const sourceIndex = visibleGraphNodes.findIndex((node) => nodeKey(node) === nodeKey(edge.source));
                   const targetIndex = visibleGraphNodes.findIndex((node) => nodeKey(node) === nodeKey(edge.target));
                   if (sourceIndex < 0 || targetIndex < 0) return null;
-                  const source = nodePoint(sourceIndex);
-                  const target = nodePoint(targetIndex);
-                  return <line key={edge.id} x1={source.x} y1={source.y} x2={target.x} y2={target.y} markerEnd="url(#arrow)" />;
+                  const sourcePosition=graphNodePosition(visibleGraphNodes[sourceIndex],sourceIndex);
+                  const targetPosition=graphNodePosition(visibleGraphNodes[targetIndex],targetIndex);
+                  return <line key={edge.id} x1={sourcePosition.x*10} y1={sourcePosition.y*4.3} x2={targetPosition.x*10} y2={targetPosition.y*4.3} markerEnd="url(#arrow)" />;
                 })}
               </svg>
               {visibleGraphNodes.map((node, index) => (
                 <button
                   type="button"
                   className={`node${connectSelection.includes(nodeKey(node)) ? " is-selected" : ""}`}
-                  style={{ left: `${nodePoint(index).x / 10}%`, top: `${nodePoint(index).y / 4.3}%` }}
+                  style={{ left: `${graphNodePosition(node,index).x}%`, top: `${graphNodePosition(node,index).y}%`, "--node-scale": graphNodeScale } as React.CSSProperties}
                   key={nodeKey(node)}
-                  onClick={() => selectGraphNode(node)}
+                  onPointerDown={(event)=>startGraphNodeDrag(event,node,index)}
+                  onPointerMove={moveGraphNode}
+                  onPointerUp={finishGraphNodeDrag}
+                  onPointerCancel={finishGraphNodeDrag}
+                  onClick={() => activateGraphNode(node)}
                   aria-pressed={connectSelection.includes(nodeKey(node))}
                 >
                   <strong>{node.label}</strong>
@@ -1005,7 +1149,7 @@ function App() {
               {visibleGraphEdges.map((edge) => {
                 const source = graph?.nodes.find((node) => node.type === edge.source.type && node.id === edge.source.id);
                 const target = graph?.nodes.find((node) => node.type === edge.target.type && node.id === edge.target.id);
-                return <div key={edge.id}><strong>{source?.label ?? edge.source.type}</strong><span> {edge.semanticType} → </span><strong>{target?.label ?? edge.target.type}</strong><small>{edge.confidence} · {edge.hypothesisTitle}</small><div className="row-actions"><button className="result-action" onClick={() => createTaskFromHypothesis(edge)}>Назначить проверку</button><button className="result-action" onClick={() => startTransition(() => generateReport(null).catch(handleFormError))}>В итоговый отчет</button></div></div>;
+                return <div key={edge.id}><strong>{source?.label ?? edge.source.type}</strong><span> {edge.semanticType} → </span><strong>{target?.label ?? edge.target.type}</strong><small>{edge.confidence} · {edge.hypothesisTitle}</small><div className="row-actions"><button className="result-action" onClick={() => createTaskFromHypothesis(edge)}>Назначить проверку</button><button className="result-action" onClick={() => startTransition(() => generateReport(null).catch(handleFormError))}>В итоговый отчет</button>{currentUser?.role==="DETECTIVE"?<button className="result-action danger-action" onClick={()=>startTransition(()=>deleteGraphEdge(edge).catch(handleFormError))}><X size={15}/> Удалить</button>:null}</div></div>;
               })}
             </div>
           </div>
@@ -1021,9 +1165,7 @@ function App() {
             {preview && reportFormat === "HTML" ? <div className="html-preview" dangerouslySetInnerHTML={{__html:preview.content}} /> : <pre>{preview?.content ?? "Сформируйте предпросмотр, чтобы проверить обязательные поля, экспертизы и гипотезы."}</pre>}
             {preview?.hasOpenLabRequests ? <button className="force-button" onClick={() => startTransition(() => generateReport(true).catch(handleFormError))}>Продолжить с пометкой «Данные ожидаются»</button> : null}
             {approvedReport ? (
-              <button className="download-button" onClick={() => startTransition(() => downloadReport().catch((error) => setMessage(error.message)))} disabled={isPending}>
-                <FileText size={18} /> Скачать {approvedReport.registrationNumber}
-              </button>
+              <div className="report-file-actions"><button className="download-button" onClick={() => startTransition(() => downloadReport().catch((error) => setMessage(error.message)))} disabled={isPending}><FileText size={18} /> Скачать {approvedReport.registrationNumber}</button>{currentUser?.role==="DETECTIVE"?<button className="result-action danger-action" onClick={()=>startTransition(()=>deleteEntity(`/reports/${approvedReport.id}`,approvedReport.registrationNumber,()=>setApprovedReport(null)).catch(handleFormError))}>Удалить отчет</button>:null}</div>
             ) : null}
           </div>
         </section>
@@ -1042,6 +1184,11 @@ function Panel({ title, count, children }: { title: string; count: number; child
       <div className="panel-body">{children}</div>
     </section>
   );
+}
+
+function WindowActions({onEdit,onDelete}:{onEdit?:()=>void;onDelete?:()=>void}) {
+  if(!onEdit&&!onDelete)return null;
+  return <div className="window-actions">{onEdit?<button type="button" onClick={onEdit} title="Изменить" aria-label="Изменить"><Pencil size={14}/></button>:null}{onDelete?<button type="button" className="window-delete" onClick={onDelete} title="Удалить" aria-label="Удалить"><X size={16}/></button>:null}</div>;
 }
 
 function GraphNodeSelect({ value, nodes, onChange }: { value: string; nodes: Graph["nodes"]; onChange: (value: string) => void }) {

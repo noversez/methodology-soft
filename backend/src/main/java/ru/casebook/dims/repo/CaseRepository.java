@@ -6,5 +6,6 @@ import ru.casebook.dims.domain.CaseFile;
 import java.util.UUID;
 
 public interface CaseRepository extends JpaRepository<CaseFile, UUID> {
+    java.util.Optional<CaseFile> findByRegistrationNumber(String registrationNumber);
     long countByRegistrationNumberStartingWith(String prefix);
 }

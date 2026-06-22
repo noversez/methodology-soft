@@ -26,4 +26,7 @@ public class Interview {
     public String getProtocolText() { return protocolText; }
     public UserAccount getCreatedBy() { return createdBy; }
     public Instant getCreatedAt() { return createdAt; }
+    public void update(String interviewee, Instant occurredAt, String protocolText) {
+        this.interviewee=interviewee; this.occurredAt=occurredAt; this.protocolText=protocolText;
+    }
 }

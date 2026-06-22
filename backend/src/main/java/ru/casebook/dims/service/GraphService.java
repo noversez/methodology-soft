@@ -50,7 +50,6 @@ public class GraphService {
         labs.findByCaseFileId(caseId).forEach(item -> allNodes.add(new GraphNodeResponse(NodeType.LAB_REQUEST, item.getId(), item.getProfile(), item.getStatus().name(), item.getVersion())));
         reports.findByCaseFileId(caseId).forEach(item -> allNodes.add(new GraphNodeResponse(NodeType.REPORT, item.getId(), item.getRegistrationNumber(), item.getStatus().name(), 0)));
         scenes.findByCaseFileId(caseId).forEach(item -> allNodes.add(new GraphNodeResponse(NodeType.LOCATION, item.getId(), item.getTitle(), item.getAddress(), 0)));
-        hypotheses.findByCaseFileId(caseId).forEach(item -> allNodes.add(new GraphNodeResponse(NodeType.HYPOTHESIS, item.getId(), item.getTitle(), item.getConfidence().name(), 0)));
         boolean filtered = allNodes.size() > GRAPH_NODE_LIMIT;
         List<GraphNodeResponse> displayedNodes = filtered ? allNodes.stream().limit(GRAPH_NODE_LIMIT).toList() : allNodes;
 
@@ -91,6 +90,26 @@ public class GraphService {
     }
 
     @Transactional
+    public void deleteEdge(UserAccount actor, UUID caseId, UUID edgeId, Long expectedGraphRevision) {
+        currentUserService.requireAnyRole(actor, Role.DETECTIVE);
+        CaseFile caseFile = cases.findById(caseId).orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "CASE_NOT_FOUND", "Дело не найдено"));
+        if (caseFile.getStatus() == CaseStatus.CLOSED) throw new ApiException(HttpStatus.CONFLICT, "CASE_NOT_ACTIVE", "Граф закрытого дела недоступен для изменения");
+        if (expectedGraphRevision != null && expectedGraphRevision != caseFile.getGraphRevision()) {
+            throw new ApiException(HttpStatus.CONFLICT, "GRAPH_STALE", "Граф был изменен другим пользователем и обновлен");
+        }
+        GraphEdge edge = edges.findById(edgeId)
+                .filter(item -> item.getCaseFile().getId().equals(caseId))
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "GRAPH_EDGE_NOT_FOUND", "Связь не найдена в выбранном деле"));
+        UUID hypothesisId = edge.getHypothesis() == null ? null : edge.getHypothesis().getId();
+        edges.delete(edge);
+        edges.flush();
+        if (hypothesisId != null && edges.countByHypothesisId(hypothesisId) == 0) hypotheses.deleteById(hypothesisId);
+        caseFile.advanceGraphRevision();
+        String metadata = hypothesisId == null ? "{}" : "{\"hypothesisId\":\"" + hypothesisId + "\"}";
+        auditService.record(actor, "GRAPH_EDGE_DELETED", "GraphEdge", edgeId, metadata);
+    }
+
+    @Transactional
     public Hypothesis createHypothesis(UserAccount actor, UUID caseId, HypothesisRequest request) {
         currentUserService.requireAnyRole(actor, Role.DETECTIVE, Role.ASSISTANT);
         CaseFile caseFile = cases.findById(caseId).orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "CASE_NOT_FOUND", "Case not found"));
@@ -111,7 +130,7 @@ public class GraphService {
             case LAB_REQUEST -> labs.findById(node.id()).map(item -> item.getCaseFile().getId().equals(caseId)).orElse(false);
             case REPORT -> reports.findById(node.id()).map(item -> item.getCaseFile().getId().equals(caseId)).orElse(false);
             case LOCATION -> scenes.findById(node.id()).map(item -> item.getCaseFile().getId().equals(caseId)).orElse(false);
-            case HYPOTHESIS -> hypotheses.findById(node.id()).map(item -> item.getCaseFile().getId().equals(caseId)).orElse(false);
+            case HYPOTHESIS -> false;
             case PERSON -> false;
         };
         if (!exists) throw new ApiException(HttpStatus.BAD_REQUEST, "GRAPH_NODE_INVALID", "Узел не существует или не принадлежит выбранному делу");

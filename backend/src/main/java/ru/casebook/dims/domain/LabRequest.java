@@ -97,4 +97,7 @@ public class LabRequest {
         this.status = LabRequestStatus.COMPLETED;
         this.resultText = resultText;
     }
+    public void updateDetails(String profile, String questions, Instant desiredDueDate) {
+        this.profile=profile; this.questions=questions; this.desiredDueDate=desiredDueDate;
+    }
 }

@@ -14,10 +14,12 @@ import java.util.UUID;
 public class LabController {
     private final LabService labService;
     private final CurrentUserService currentUserService;
+    private final ru.casebook.dims.service.EntityDeletionService deletionService;
 
-    public LabController(LabService labService, CurrentUserService currentUserService) {
+    public LabController(LabService labService, CurrentUserService currentUserService, ru.casebook.dims.service.EntityDeletionService deletionService) {
         this.labService = labService;
         this.currentUserService = currentUserService;
+        this.deletionService = deletionService;
     }
 
     @GetMapping("/api/evidence/{evidenceId}/lab-requests")
@@ -47,6 +49,9 @@ public class LabController {
         return LabResponse.from(labService.create(actor, evidenceId, request));
     }
 
+    @PatchMapping("/api/lab-requests/{id}")
+    public LabResponse update(@RequestHeader("X-User-Id") String userId,@PathVariable UUID id,@Valid @RequestBody LabRequestCreate request){return LabResponse.from(labService.update(currentUserService.requireUser(userId),id,request));}
+
     @PatchMapping("/api/lab-requests/{id}/status")
     public LabResponse status(@RequestHeader("X-User-Id") String userId, @PathVariable UUID id, @Valid @RequestBody LabStatusRequest request) {
         UserAccount actor = currentUserService.requireUser(userId);
@@ -58,4 +63,5 @@ public class LabController {
         UserAccount actor = currentUserService.requireUser(userId);
         return LabResponse.from(labService.complete(actor, id, request.resultText()));
     }
+    @DeleteMapping("/api/lab-requests/{id}") @ResponseStatus(org.springframework.http.HttpStatus.NO_CONTENT) public void delete(@RequestHeader("X-User-Id") String userId,@PathVariable UUID id){deletionService.deleteLab(currentUserService.requireUser(userId),id);}
 }

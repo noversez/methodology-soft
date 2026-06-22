@@ -31,4 +31,7 @@ public class IncidentScene {
     public Double getLongitude() { return longitude; }
     public UserAccount getCreatedBy() { return createdBy; }
     public Instant getCreatedAt() { return createdAt; }
+    public void update(String title, String description, String address, Double latitude, Double longitude) {
+        this.title=title; this.description=description; this.address=address; this.latitude=latitude; this.longitude=longitude;
+    }
 }

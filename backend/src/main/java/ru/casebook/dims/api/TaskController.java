@@ -18,10 +18,12 @@ import java.util.UUID;
 public class TaskController {
     private final TaskService taskService;
     private final CurrentUserService currentUserService;
+    private final ru.casebook.dims.service.EntityDeletionService deletionService;
 
-    public TaskController(TaskService taskService, CurrentUserService currentUserService) {
+    public TaskController(TaskService taskService, CurrentUserService currentUserService, ru.casebook.dims.service.EntityDeletionService deletionService) {
         this.taskService = taskService;
         this.currentUserService = currentUserService;
+        this.deletionService = deletionService;
     }
 
     @GetMapping("/api/cases/{caseId}/tasks")
@@ -58,4 +60,5 @@ public class TaskController {
         UserAccount actor = currentUserService.requireUser(userId);
         return EvidenceResponse.from(taskService.createResultEvidence(actor, id, request));
     }
+    @DeleteMapping("/api/tasks/{id}") @ResponseStatus(org.springframework.http.HttpStatus.NO_CONTENT) public void delete(@RequestHeader("X-User-Id") String userId,@PathVariable UUID id){deletionService.deleteTask(currentUserService.requireUser(userId),id);}
 }

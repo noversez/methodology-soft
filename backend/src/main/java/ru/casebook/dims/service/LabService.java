@@ -49,6 +49,17 @@ public class LabService {
     }
 
     @Transactional
+    public LabRequest update(UserAccount actor, UUID id, LabRequestCreate request) {
+        currentUserService.requireAnyRole(actor, Role.DETECTIVE);
+        LabRequest lab=get(id);
+        if(lab.getStatus()==LabRequestStatus.COMPLETED)throw new ApiException(HttpStatus.CONFLICT,"LAB_RESULT_IMMUTABLE","Завершенное заключение нельзя изменять; удалите запрос и создайте новый");
+        if(!request.desiredDueDate().isAfter(Instant.now()))throw new ApiException(HttpStatus.BAD_REQUEST,"INVALID_LAB_DEADLINE","Срок экспертизы должен быть в будущем");
+        lab.updateDetails(request.profile(),request.questions(),request.desiredDueDate());
+        auditService.record(actor,"LAB_REQUEST_UPDATED","LabRequest",id,"{}");
+        return lab;
+    }
+
+    @Transactional
     public LabRequest create(UserAccount actor, UUID evidenceId, LabRequestCreate request) {
         currentUserService.requireAnyRole(actor, Role.DETECTIVE, Role.ASSISTANT);
         Evidence item = evidence.findById(evidenceId).orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "EVIDENCE_NOT_FOUND", "Улика не найдена"));

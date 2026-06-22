@@ -1,6 +1,7 @@
 package ru.casebook.dims.api;
 
 import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import ru.casebook.dims.api.dto.GraphDtos.*;
 import ru.casebook.dims.domain.UserAccount;
@@ -30,6 +31,15 @@ public class GraphController {
     public GraphEdgeResponse createEdge(@RequestHeader("X-User-Id") String userId, @PathVariable UUID caseId, @Valid @RequestBody GraphEdgeRequest request) {
         UserAccount actor = currentUserService.requireUser(userId);
         return GraphEdgeResponse.from(graphService.createEdge(actor, caseId, request));
+    }
+
+    @DeleteMapping("/graph/edges/{edgeId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteEdge(@RequestHeader("X-User-Id") String userId,
+                           @PathVariable UUID caseId,
+                           @PathVariable UUID edgeId,
+                           @RequestParam(required = false) Long expectedGraphRevision) {
+        graphService.deleteEdge(currentUserService.requireUser(userId), caseId, edgeId, expectedGraphRevision);
     }
 
     @GetMapping("/hypotheses")

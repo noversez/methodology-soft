@@ -9,6 +9,7 @@ import java.util.UUID;
 
 public interface GraphEdgeRepository extends JpaRepository<GraphEdge, UUID> {
     List<GraphEdge> findByCaseFileId(UUID caseId);
+    long countByHypothesisId(UUID hypothesisId);
     boolean existsByCaseFileIdAndSourceTypeAndSourceIdAndTargetTypeAndTargetIdAndSemanticType(
             UUID caseId,
             NodeType sourceType,

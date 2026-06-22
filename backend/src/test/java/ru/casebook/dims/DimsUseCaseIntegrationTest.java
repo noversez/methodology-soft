@@ -25,6 +25,7 @@ import ru.casebook.dims.repo.UserRepository;
 import ru.casebook.dims.service.*;
 
 import java.time.Instant;
+import java.util.UUID;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.io.ByteArrayOutputStream;
@@ -49,6 +50,7 @@ class DimsUseCaseIntegrationTest {
     @Autowired NotificationRepository notifications;
     @Autowired AuditLogRepository auditLogs;
     @Autowired DimsProperties dimsProperties;
+    @Autowired EntityDeletionService deletionService;
 
     @Test
     void caseCreationIsRestrictedAndAudited() {
@@ -139,8 +141,15 @@ class DimsUseCaseIntegrationTest {
         UserAccount assistant = user("watson");
         UserAccount admin = user("admin");
         CaseFile caseFile = createCase(detective, "Task case");
+        assertThat(caseContextService.participants(caseFile.getId())).extracting(UserAccount::getLogin).contains("agent","watson");
 
         TaskItem task = taskService.create(detective, caseFile.getId(), taskRequest("Inspect scene", agent.getId(), Instant.now().plusSeconds(86_400)));
+        assertThat(task.getRegistrationNumber()).startsWith("TASK-");
+        assertThat(taskService.listByCase(caseFile.getId())).extracting(TaskItem::getId).contains(task.getId());
+        assertThat(taskService.myTasks(agent)).extracting(TaskItem::getId).contains(task.getId());
+        assertThat(notifications.findByRecipientIdOrderByCreatedAtDesc(agent.getId())).anyMatch(item -> "TASK_ASSIGNED".equals(item.getType()));
+        assertThatThrownBy(() -> taskService.updateStatus(agent,task.getId(),new TaskStatusRequest(TaskStatus.DONE,"Skipped in progress")))
+                .isInstanceOf(ApiException.class).extracting("code").isEqualTo("INVALID_TASK_STATUS_TRANSITION");
         TaskItem started = taskService.updateStatus(agent, task.getId(), new TaskStatusRequest(TaskStatus.IN_PROGRESS, null));
         assertThat(started.getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
         taskService.updateStatus(agent, task.getId(), new TaskStatusRequest(TaskStatus.DONE, "Field result with a photographed trace"));
@@ -153,6 +162,7 @@ class DimsUseCaseIntegrationTest {
         assertThat(reassigned.getAssignee().getId()).isEqualTo(assistant.getId());
         assertThat(reassigned.getStatus()).isEqualTo(TaskStatus.ASSIGNED);
         assertThat(notifications.findByRecipientIdOrderByCreatedAtDesc(assistant.getId())).anyMatch(item -> "TASK_REASSIGNED".equals(item.getType()));
+        assertThat(notifications.findByRecipientIdOrderByCreatedAtDesc(agent.getId())).noneMatch(item -> item.getPayloadJson().contains(task.getId().toString()));
         assertThatThrownBy(() -> taskService.create(detective, caseFile.getId(), taskRequest("Past", agent.getId(), Instant.now().minusSeconds(60))))
                 .isInstanceOf(ApiException.class)
                 .extracting("code")
@@ -161,6 +171,15 @@ class DimsUseCaseIntegrationTest {
                 .isInstanceOf(ApiException.class)
                 .extracting("code")
                 .isEqualTo("INVALID_ASSIGNEE_ROLE");
+        UserAccount outsider=users.save(new UserAccount("outsider-"+UUID.randomUUID(),SecurityHash.sha256("password"),Role.AGENT,"Внешний агент"));
+        assertThatThrownBy(() -> taskService.create(detective,caseFile.getId(),taskRequest("Outsider",outsider.getId(),Instant.now().plusSeconds(86_400))))
+                .isInstanceOf(ApiException.class).extracting("code").isEqualTo("ASSIGNEE_NOT_IN_CASE");
+        CaseFile closed=createCase(detective,"Closed task case");
+        caseService.update(detective,closed.getId(),new CaseRequest(closed.getTitle(),closed.getOpenedAt(),closed.getPriority(),CaseStatus.CLOSED,closed.getDescription()));
+        assertThatThrownBy(() -> taskService.create(detective,closed.getId(),taskRequest("Closed",agent.getId(),Instant.now().plusSeconds(86_400))))
+                .isInstanceOf(ApiException.class).extracting("code").isEqualTo("CASE_NOT_ACTIVE");
+        assertThat(auditLogs.findAll()).anyMatch(log -> "TASK_CREATED".equals(log.getAction())&&task.getId().equals(log.getEntityId()));
+        assertThat(auditLogs.findAll()).anyMatch(log -> "TASK_REASSIGNED".equals(log.getAction())&&task.getId().equals(log.getEntityId()));
     }
 
     @Test
@@ -263,6 +282,7 @@ class DimsUseCaseIntegrationTest {
 
         assertThat(hypothesis.getId()).isNotNull();
         assertThat(graphService.graph(caseFile.getId()).nodes()).isNotEmpty();
+        assertThat(graphService.graph(caseFile.getId()).nodes()).noneMatch(node -> node.type() == NodeType.HYPOTHESIS);
         assertThat(graphService.graph(caseFile.getId()).graphRevision()).isEqualTo(initialRevision + 1);
         assertThat(edge.getHypothesis()).isNotNull();
         assertThatThrownBy(() -> graphService.createEdge(detective, caseFile.getId(), edgeRequest))
@@ -295,6 +315,32 @@ class DimsUseCaseIntegrationTest {
                 .extracting("code")
                 .isEqualTo("GRAPH_NODE_INVALID");
         assertThat(auditLogs.findAll()).anyMatch(log -> "GRAPH_EDGE_CREATED".equals(log.getAction()) && edge.getId().equals(log.getEntityId()));
+
+        UUID linkedHypothesisId = edge.getHypothesis().getId();
+        graphService.deleteEdge(detective, caseFile.getId(), edge.getId(), initialRevision + 1);
+        assertThat(graphService.graph(caseFile.getId()).edges()).noneMatch(item -> item.id().equals(edge.getId()));
+        assertThat(graphService.graph(caseFile.getId()).graphRevision()).isEqualTo(initialRevision + 2);
+        assertThat(graphService.hypotheses(caseFile.getId())).extracting(Hypothesis::getId)
+                .contains(hypothesis.getId())
+                .doesNotContain(linkedHypothesisId);
+        assertThat(auditLogs.findAll()).anyMatch(log -> "GRAPH_EDGE_DELETED".equals(log.getAction()) && edge.getId().equals(log.getEntityId()));
+    }
+
+    @Test
+    void caseDeletionRemovesDependentMaterialsAndIsAudited() {
+        UserAccount detective=user("sherlock");
+        CaseFile caseFile=createCase(detective,"Disposable case");
+        Evidence item=createEvidence(detective,caseFile,"Disposable evidence");
+        caseContextService.addScene(detective,caseFile.getId(),new SceneRequest("Scene","Description","Address",null,null));
+        caseContextService.addInterview(detective,caseFile.getId(),new InterviewRequest("Witness",Instant.now(),"Protocol"));
+        taskService.create(detective,caseFile.getId(),new TaskRequest("Task","Description",user("agent").getId(),Priority.MEDIUM,Instant.now().plusSeconds(86_400)));
+        long revision=graphService.graph(caseFile.getId()).graphRevision();
+        graphService.createEdge(detective,caseFile.getId(),new GraphEdgeRequest(new NodeRef(NodeType.CASE,caseFile.getId()),new NodeRef(NodeType.EVIDENCE,item.getId()),"supports",Confidence.MEDIUM,"Theory","Reason",revision));
+
+        deletionService.deleteCase(detective,caseFile.getId());
+
+        assertThatThrownBy(()->caseService.get(caseFile.getId())).isInstanceOf(ApiException.class).extracting("code").isEqualTo("CASE_NOT_FOUND");
+        assertThat(auditLogs.findAll()).anyMatch(log->"CASE_DELETED".equals(log.getAction())&&caseFile.getId().equals(log.getEntityId()));
     }
 
     private UserAccount user(String login) {

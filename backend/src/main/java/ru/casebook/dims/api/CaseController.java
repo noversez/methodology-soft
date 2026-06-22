@@ -16,10 +16,12 @@ import java.util.UUID;
 public class CaseController {
     private final CaseService caseService;
     private final CurrentUserService currentUserService;
+    private final ru.casebook.dims.service.EntityDeletionService deletionService;
 
-    public CaseController(CaseService caseService, CurrentUserService currentUserService) {
+    public CaseController(CaseService caseService, CurrentUserService currentUserService, ru.casebook.dims.service.EntityDeletionService deletionService) {
         this.caseService = caseService;
         this.currentUserService = currentUserService;
+        this.deletionService = deletionService;
     }
 
     @GetMapping
@@ -43,4 +45,8 @@ public class CaseController {
         UserAccount actor = currentUserService.requireUser(userId);
         return CaseResponse.from(caseService.update(actor, id, request));
     }
+
+    @DeleteMapping("/{id}")
+    @ResponseStatus(org.springframework.http.HttpStatus.NO_CONTENT)
+    public void delete(@RequestHeader("X-User-Id") String userId, @PathVariable UUID id) { deletionService.deleteCase(currentUserService.requireUser(userId), id); }
 }

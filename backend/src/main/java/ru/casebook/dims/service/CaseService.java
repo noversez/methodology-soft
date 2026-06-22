@@ -9,6 +9,9 @@ import ru.casebook.dims.domain.CaseFile;
 import ru.casebook.dims.domain.Role;
 import ru.casebook.dims.domain.UserAccount;
 import ru.casebook.dims.repo.CaseRepository;
+import ru.casebook.dims.repo.CaseParticipantRepository;
+import ru.casebook.dims.repo.UserRepository;
+import ru.casebook.dims.domain.CaseParticipant;
 
 import java.time.ZoneOffset;
 import java.util.List;
@@ -19,11 +22,14 @@ public class CaseService {
     private final CaseRepository cases;
     private final CurrentUserService currentUserService;
     private final AuditService auditService;
+    private final CaseParticipantRepository participants;
+    private final UserRepository users;
 
-    public CaseService(CaseRepository cases, CurrentUserService currentUserService, AuditService auditService) {
+    public CaseService(CaseRepository cases, CurrentUserService currentUserService, AuditService auditService,CaseParticipantRepository participants,UserRepository users) {
         this.cases = cases;
         this.currentUserService = currentUserService;
         this.auditService = auditService;
+        this.participants=participants;this.users=users;
     }
 
     public List<CaseFile> list() {
@@ -41,6 +47,8 @@ public class CaseService {
         String prefix = "CASE-" + year + "-";
         String number = prefix + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
         CaseFile created = cases.save(new CaseFile(number, request.title(), request.openedAt(), request.priority(), request.description(), actor));
+        participants.save(new CaseParticipant(created,actor));
+        users.findAll().stream().filter(UserAccount::isActive).filter(u->u.getRole()==Role.AGENT||u.getRole()==Role.ASSISTANT).forEach(u->participants.save(new CaseParticipant(created,u)));
         auditService.record(actor, "CASE_CREATED", "Case", created.getId(), "{\"registrationNumber\":\"" + number + "\"}");
         return created;
     }

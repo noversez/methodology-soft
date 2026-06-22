@@ -11,6 +11,9 @@ public class TaskItem {
     @Id
     private UUID id = UUID.randomUUID();
 
+    @Column(nullable=false,unique=true)
+    private String registrationNumber;
+
     @ManyToOne(optional = false, fetch = FetchType.LAZY)
     private CaseFile caseFile;
 
@@ -54,8 +57,9 @@ public class TaskItem {
     protected TaskItem() {
     }
 
-    public TaskItem(CaseFile caseFile, String title, String description, UserAccount assignee, UserAccount createdBy, Priority priority, Instant deadline) {
+    public TaskItem(CaseFile caseFile, String registrationNumber, String title, String description, UserAccount assignee, UserAccount createdBy, Priority priority, Instant deadline) {
         this.caseFile = caseFile;
+        this.registrationNumber = registrationNumber;
         this.title = title;
         this.description = description;
         this.assignee = assignee;
@@ -64,12 +68,17 @@ public class TaskItem {
         this.deadline = deadline;
     }
 
+    public TaskItem(CaseFile caseFile, String title, String description, UserAccount assignee, UserAccount createdBy, Priority priority, Instant deadline) {
+        this(caseFile,"TASK-"+UUID.randomUUID().toString().substring(0,8).toUpperCase(),title,description,assignee,createdBy,priority,deadline);
+    }
+
     @PreUpdate
     void touch() {
         updatedAt = Instant.now();
     }
 
     public UUID getId() { return id; }
+    public String getRegistrationNumber(){return registrationNumber;}
     public CaseFile getCaseFile() { return caseFile; }
     public String getTitle() { return title; }
     public String getDescription() { return description; }

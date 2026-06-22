@@ -17,4 +17,5 @@ public final class CaseContextDtos {
     public record InterviewResponse(UUID id, UUID caseId, String interviewee, Instant occurredAt, String protocolText, UUID createdBy, Instant createdAt) {
         public static InterviewResponse from(Interview i) { return new InterviewResponse(i.getId(), i.getCaseFile().getId(), i.getInterviewee(), i.getOccurredAt(), i.getProtocolText(), i.getCreatedBy().getId(), i.getCreatedAt()); }
     }
+    public record ParticipantRequest(@NotNull UUID userId) {}
 }

@@ -16,10 +16,12 @@ import java.util.UUID;
 public class EvidenceController {
     private final EvidenceService evidenceService;
     private final CurrentUserService currentUserService;
+    private final ru.casebook.dims.service.EntityDeletionService deletionService;
 
-    public EvidenceController(EvidenceService evidenceService, CurrentUserService currentUserService) {
+    public EvidenceController(EvidenceService evidenceService, CurrentUserService currentUserService, ru.casebook.dims.service.EntityDeletionService deletionService) {
         this.evidenceService = evidenceService;
         this.currentUserService = currentUserService;
+        this.deletionService = deletionService;
     }
 
     @GetMapping("/api/cases/{caseId}/evidence")
@@ -48,4 +50,8 @@ public class EvidenceController {
     public List<EvidenceVersionResponse> versions(@PathVariable UUID id) {
         return evidenceService.versions(id).stream().map(EvidenceVersionResponse::from).toList();
     }
+
+    @DeleteMapping("/api/evidence/{id}")
+    @ResponseStatus(org.springframework.http.HttpStatus.NO_CONTENT)
+    public void delete(@RequestHeader("X-User-Id") String userId, @PathVariable UUID id) { deletionService.deleteEvidence(currentUserService.requireUser(userId), id); }
 }
