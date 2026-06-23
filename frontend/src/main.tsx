@@ -845,12 +845,19 @@ function App() {
     return (
       <main className="login-shell">
         <form className="login-card" onSubmit={authenticate}>
-          <Shield size={38} />
-          <h1>Вход в DIMS</h1>
+          <div className="login-card__header">
+            <div className="login-mark" aria-hidden="true">
+              <Shield size={30} />
+            </div>
+            <div>
+              <span className="login-eyebrow">DIMS Casebook Holmes</span>
+              <h1>Вход в DIMS</h1>
+            </div>
+          </div>
           <FormField label="Логин" error={fieldErrors.login}><input value={login} onChange={(event) => setLogin(event.target.value)} autoFocus /></FormField>
           <FormField label="Пароль" error={fieldErrors.password}><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></FormField>
           {message ? <div className="warning" role="alert">{message}</div> : null}
-          <button className="primary" type="submit" disabled={isPending}>Войти</button>
+          <button className="primary login-submit" type="submit" disabled={isPending}>{isPending ? "Проверка..." : "Войти"}</button>
         </form>
       </main>
     );
