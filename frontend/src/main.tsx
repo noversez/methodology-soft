@@ -40,6 +40,7 @@ type Attachment = { id: string; ownerType: string; ownerId: string; fileName: st
 type EvidenceVersion = { id: string; evidenceId: string; descriptionSnapshot: string; changedBy: string; changedAt: string; versionNumber: number };
 type TaskItem = { id: string; caseId: string; registrationNumber: string; title: string; description: string; assigneeId: string; priority: string; deadline: string; status: string; resultText?: string; resultEvidenceId?: string };
 type NotificationItem = { id: string; type: string; payloadJson: string; readAt?: string; createdAt: string };
+type NotificationPayload = { caseId?: string; caseTitle?: string; taskId?: string; labRequestId?: string; registrationNumber?: string; title?: string; profile?: string; status?: string };
 type LabRequest = { id: string; caseId: string; registrationNumber: string; evidenceId: string; profile: string; questions: string; desiredDueDate: string; status: string; requesterId: string; labAssigneeId?: string; resultText?: string };
 type Graph = { nodes: { type: string; id: string; label: string; status: string; version: number }[]; edges: { id: string; source: { type: string; id: string }; target: { type: string; id: string }; semanticType: string; confidence: string; hypothesisTitle?: string; hypothesisText?: string }[]; filtered: boolean; warning?: string; graphRevision: number };
 type ReportPreview = { content: string; hasOpenLabRequests: boolean; warning?: string };
@@ -60,6 +61,8 @@ type GraphLayout = {positions:Record<string,{x:number;y:number}>;pan:{x:number;y
 
 const roleTitles: Record<Role,string> = {DETECTIVE:"Ведущий детектив",ASSISTANT:"Ассистент",INSPECTOR:"Инспектор",AGENT:"Полевой агент",LAB_ANALYST:"Эксперт лаборатории",ADMIN:"Администратор"};
 const graphNodeTypeTitles: Record<string,string> = {CASE:"Дела",EVIDENCE:"Улики",TASK:"Задачи",LAB_REQUEST:"Экспертизы",REPORT:"Отчеты",LOCATION:"Места",PERSON:"Люди",HYPOTHESIS:"Гипотезы"};
+const priorityTitles: Record<string,string> = {LOW:"Низкий",MEDIUM:"Средний",HIGH:"Высокий",CRITICAL:"Критический"};
+const taskStatusTitles: Record<string,string> = {ASSIGNED:"Назначена",IN_PROGRESS:"В работе",DONE:"Завершена"};
 
 const emptyCaseDraft = (): CaseDraft => ({
   title: "",
@@ -121,6 +124,26 @@ function loadDrafts(): { caseDraft: CaseDraft; evidenceDraft: EvidenceDraft; age
     localStorage.removeItem(DRAFTS_KEY);
   }
   return { caseDraft: emptyCaseDraft(), evidenceDraft: emptyEvidenceDraft(), agentResultDraft: emptyAgentResultDraft() };
+}
+
+function notificationPayload(item: NotificationItem): NotificationPayload {
+  try {
+    return JSON.parse(item.payloadJson) as NotificationPayload;
+  } catch {
+    return {};
+  }
+}
+
+function notificationTitle(item: NotificationItem) {
+  const payload = notificationPayload(item);
+  const subject = payload.registrationNumber ? `${payload.registrationNumber}${payload.title || payload.profile ? ` · ${payload.title ?? payload.profile}` : ""}` : payload.title ?? payload.profile ?? "";
+  const suffix = subject ? `: ${subject}` : "";
+  if (item.type === "TASK_ASSIGNED") return `Назначена новая задача${suffix}`;
+  if (item.type === "TASK_REASSIGNED") return `Задача переназначена вам${suffix}`;
+  if (item.type === "LAB_REQUEST_ASSIGNED") return `Назначена экспертиза${suffix}`;
+  if (item.type === "LAB_STATUS_CHANGED") return `Статус экспертизы: ${payload.status ?? "изменен"}${suffix}`;
+  if (item.type === "LAB_RESULT_READY") return `Готово заключение эксперта${suffix}`;
+  return item.type;
 }
 
 function required(value: string, label: string) {
@@ -322,7 +345,7 @@ function App() {
 
   useEffect(() => {
     if (!userId || !currentUser) return;
-    request<NotificationItem[]>("/notifications",userId).then(setNotifications).catch((error)=>setMessage(error.message));
+    if (selectedCaseId) request<NotificationItem[]>(`/notifications?caseId=${selectedCaseId}`,userId).then(setNotifications).catch((error)=>setMessage(error.message));
     if (currentUser.role === "AGENT" || currentUser.role === "ASSISTANT") {
       request<TaskItem[]>("/tasks/my", userId).then(setMyTasks).catch((error) => setMessage(error.message));
     } else {
@@ -333,7 +356,7 @@ function App() {
     } else {
       setLabQueue([]);
     }
-  }, [userId, currentUser?.role]);
+  }, [userId, currentUser?.role, selectedCaseId]);
 
   useEffect(() => {
     localStorage.setItem(DRAFTS_KEY, JSON.stringify({ version: 1, caseDraft, evidenceDraft, agentResultDraft }));
@@ -350,6 +373,7 @@ function App() {
   }, []);
 
   const assignees = participants.filter((user) => user.role === "AGENT" || user.role === "ASSISTANT");
+  const taskAssigneeName = (task: TaskItem) => users.find((user) => user.id === task.assigneeId)?.displayName ?? (currentUser?.id === task.assigneeId ? currentUser.displayName : "Исполнитель не найден");
 
   async function createCase(draft: CaseDraft) {
     if (!userId) throw new ApiRequestError("Сеанс входа не получен. Войдите в систему повторно", "AUTH_REQUIRED");
@@ -1153,6 +1177,38 @@ function App() {
           </FormDialog>
         ) : null}
 
+        <section className="task-strip">
+          <div className="task-strip__heading">
+            <div>
+              <h2>{currentUser.role === "AGENT" || currentUser.role === "ASSISTANT" ? "Мои задачи" : "Задачи"}</h2>
+              <span>{currentUser.role === "AGENT" || currentUser.role === "ASSISTANT" ? "Активные поручения исполнителя" : "Поручения по выбранному делу"}</span>
+            </div>
+            <b>{visibleTasks.length}</b>
+          </div>
+          <div className="task-list">
+            {visibleTasks.length ? visibleTasks.map((item) => (
+              <article className="task-row" key={item.id}>
+                <div className="task-row__main">
+                  <span className="task-number">{item.registrationNumber}</span>
+                  <strong>{item.title}</strong>
+                </div>
+                <div className="task-row__meta">
+                  <span>{taskStatusTitles[item.status] ?? item.status}</span>
+                  <span>{taskAssigneeName(item)}</span>
+                  <span>{priorityTitles[item.priority] ?? item.priority}</span>
+                  <span>{new Date(item.deadline).toLocaleString("ru-RU")}</span>
+                </div>
+                <div className="task-row__actions">
+                  {(currentUser.role === "AGENT" || currentUser.role === "ASSISTANT") && item.status === "ASSIGNED" ? <button className="result-action" onClick={() => startTransition(() => changeTaskStatus(item, "IN_PROGRESS").catch(handleFormError))}>Принять</button> : null}
+                  {(currentUser.role === "AGENT" || currentUser.role === "ASSISTANT") && item.status === "IN_PROGRESS" ? <button className="result-action" onClick={() => openAgentResult(item)}><Camera size={16} /> Результат</button> : null}
+                  {currentUser.role === "DETECTIVE" && item.status !== "DONE" ? <button type="button" className="result-action" onClick={() => editTask(item)}><RotateCcw size={16} /> Переназначить</button> : null}
+                  {currentUser.role === "DETECTIVE" ? <button type="button" className="result-action danger-action" onClick={()=>startTransition(()=>deleteEntity(`/tasks/${item.id}`,item.title).catch(handleFormError))}>Удалить</button> : null}
+                </div>
+              </article>
+            )) : <div className="task-empty">Нет задач по выбранному делу</div>}
+          </div>
+        </section>
+
         <section className="grid">
           <Panel title="Дела" count={cases.length}>
             {cases.map((item) => (
@@ -1192,23 +1248,8 @@ function App() {
           <Panel title="Интервью" count={interviews.length}>
             {interviews.map((item)=><article className="row" key={item.id}><strong>{item.interviewee}</strong><span>{new Date(item.occurredAt).toLocaleString("ru-RU")}</span><small>{item.protocolText}</small>{currentUser?.role==="DETECTIVE"?<WindowActions onEdit={()=>editInterview(item)} onDelete={()=>startTransition(()=>deleteEntity(`/cases/${selectedCaseId}/interviews/${item.id}`,item.interviewee).catch(handleFormError))}/>:null}</article>)}
           </Panel>
-          <Panel title={currentUser?.role === "AGENT" || currentUser?.role === "ASSISTANT" ? "Мои задачи" : "Задачи"} count={visibleTasks.length}>
-            {visibleTasks.map((item) => (
-              <article className="row" key={item.id}>
-                <strong>{item.registrationNumber} · {item.title}</strong>
-                <span>{item.status} · {new Date(item.deadline).toLocaleDateString("ru-RU")}</span>
-                {(currentUser?.role === "AGENT" || currentUser?.role === "ASSISTANT") && item.status !== "DONE" ? (
-                  <div className="row-actions">
-                    {item.status === "ASSIGNED" ? <button className="result-action" onClick={() => startTransition(() => changeTaskStatus(item, "IN_PROGRESS").catch(handleFormError))}>Принять в работу</button> : null}
-                    {item.status === "IN_PROGRESS" ? <button className="result-action" onClick={() => openAgentResult(item)}><Camera size={16} /> Передать результат</button> : null}
-                  </div>
-                ) : null}
-                {currentUser?.role === "DETECTIVE" ? <WindowActions onEdit={item.status !== "DONE" ? ()=>editTask(item) : undefined} onDelete={()=>startTransition(()=>deleteEntity(`/tasks/${item.id}`,item.title).catch(handleFormError))}/> : null}
-              </article>
-            ))}
-          </Panel>
           <Panel title="Уведомления" count={notifications.length}>
-            {notifications.map((item)=><article className="row" key={item.id}><strong>{item.type === "TASK_ASSIGNED" ? "Назначена новая задача" : item.type === "TASK_REASSIGNED" ? "Задача переназначена вам" : item.type}</strong><span>{new Date(item.createdAt).toLocaleString("ru-RU")}</span></article>)}
+            {notifications.map((item)=>{const payload=notificationPayload(item);return <article className="row" key={item.id}><strong>{notificationTitle(item)}</strong><span>{new Date(item.createdAt).toLocaleString("ru-RU")}</span>{payload.caseTitle?<small>{payload.caseTitle}</small>:null}</article>;})}
           </Panel>
           <Panel title={currentUser?.role === "LAB_ANALYST" ? "Моя очередь" : "Лаборатория"} count={visibleLabs.length}>
             {visibleLabs.map((item) => (

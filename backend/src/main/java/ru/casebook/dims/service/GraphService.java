@@ -47,7 +47,6 @@ public class GraphService {
         evidence.findByCaseFileId(caseId).forEach(item -> allNodes.add(new GraphNodeResponse(NodeType.EVIDENCE, item.getId(), item.getName(), item.getStatus().name(), item.getVersion())));
         tasks.findByCaseFileId(caseId).forEach(item -> allNodes.add(new GraphNodeResponse(NodeType.TASK, item.getId(), item.getTitle(), item.getStatus().name(), item.getVersion())));
         labs.findByCaseFileId(caseId).forEach(item -> allNodes.add(new GraphNodeResponse(NodeType.LAB_REQUEST, item.getId(), item.getProfile(), item.getStatus().name(), item.getVersion())));
-        reports.findByCaseFileId(caseId).forEach(item -> allNodes.add(new GraphNodeResponse(NodeType.REPORT, item.getId(), item.getRegistrationNumber(), item.getStatus().name(), 0)));
         scenes.findByCaseFileId(caseId).forEach(item -> allNodes.add(new GraphNodeResponse(NodeType.LOCATION, item.getId(), item.getTitle(), item.getAddress(), 0)));
         boolean filtered = allNodes.size() > GRAPH_NODE_LIMIT;
         List<GraphNodeResponse> displayedNodes = filtered ? allNodes.stream().limit(GRAPH_NODE_LIMIT).toList() : allNodes;

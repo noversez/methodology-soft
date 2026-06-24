@@ -8,5 +8,6 @@ import java.util.UUID;
 
 public interface NotificationRepository extends JpaRepository<Notification, UUID> {
     List<Notification> findByRecipientIdOrderByCreatedAtDesc(UUID recipientId);
+    List<Notification> findByRecipientIdAndPayloadJsonContainingOrderByCreatedAtDesc(UUID recipientId, String fragment);
     long deleteByRecipientIdAndTypeAndPayloadJsonContaining(UUID recipientId,String type,String fragment);
 }

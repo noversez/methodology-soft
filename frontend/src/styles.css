@@ -520,6 +520,131 @@ h2 {
   font-weight: 700;
 }
 
+.task-strip {
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(23, 32, 27, 0.14);
+  border-radius: 8px;
+  background: #ffffff;
+  min-width: 0;
+}
+.task-strip__heading {
+  min-height: 48px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid rgba(23, 32, 27, 0.1);
+}
+.task-strip__heading > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.task-strip__heading h2 {
+  margin: 0;
+  font-size: 17px;
+}
+.task-strip__heading span {
+  color: #68736d;
+  font-size: 12px;
+  font-weight: 700;
+}
+.task-strip__heading b {
+  min-width: 28px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: #edf3ef;
+  color: #22483a;
+  font-size: 12px;
+}
+.task-list {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+}
+.task-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(260px, 1.6fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(23,32,27,.1);
+  border-radius: 7px;
+  background: rgba(23,32,27,.018);
+}
+.task-row__main {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.task-number {
+  color: #244f91;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 800;
+}
+.task-row__main strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+.task-row__meta {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+.task-row__meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #53645b;
+  font-size: 12px;
+}
+.task-row__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.task-row__actions .result-action {
+  min-height: 34px;
+  margin-top: 0;
+  padding: 0 10px;
+  font-size: 12px;
+}
+.task-empty {
+  padding: 12px;
+  border: 1px dashed rgba(23,32,27,.18);
+  border-radius: 8px;
+  color: #68736d;
+  font-size: 13px;
+  text-align: center;
+}
+:root[data-theme="dark"] .task-strip {
+  border-color: rgba(237, 242, 239, 0.14);
+  background: #19211d;
+}
+:root[data-theme="dark"] .task-strip__heading { border-color: rgba(237, 242, 239, 0.1); }
+:root[data-theme="dark"] .task-strip__heading span,
+:root[data-theme="dark"] .task-row__meta span,
+:root[data-theme="dark"] .task-empty { color: #aebbb3; }
+:root[data-theme="dark"] .task-strip__heading b {
+  background: rgba(237,242,239,.08);
+  color: #dce8e1;
+}
+:root[data-theme="dark"] .task-row {
+  border-color: rgba(237,242,239,.12);
+  background: rgba(237,242,239,.035);
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -614,6 +739,40 @@ h2 {
 .row span {
   color: #68736d;
   font-size: 12px;
+}
+.task-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 4px;
+}
+.task-meta span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  padding: 7px 8px;
+  border: 1px solid rgba(23,32,27,.1);
+  border-radius: 7px;
+  background: rgba(23,32,27,.025);
+  color: #28362f;
+  font-size: 12px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.task-meta b {
+  color: #68736d;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+:root[data-theme="dark"] .task-meta span {
+  border-color: rgba(237,242,239,.12);
+  background: rgba(237,242,239,.04);
+  color: #edf2ef;
+}
+:root[data-theme="dark"] .task-meta b { color: #aebbb3; }
+@media (max-width: 620px) {
+  .task-meta { grid-template-columns: 1fr; }
 }
 .inventory-number {
   width: fit-content;
@@ -931,6 +1090,16 @@ h2 {
   .analysis {
     grid-template-columns: 1fr;
   }
+
+  .task-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .task-row__actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
 }
 
 @media (max-width: 640px) {
@@ -958,5 +1127,9 @@ h2 {
 
   .form-actions button {
     flex: 1;
+  }
+
+  .task-row__meta {
+    grid-template-columns: 1fr 1fr;
   }
 }

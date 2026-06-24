@@ -72,7 +72,7 @@ public class LabService {
         String number = "LAB-" + item.getCaseFile().getOpenedAt().atZone(java.time.ZoneOffset.UTC).getYear() + "-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
         LabRequest created = labs.save(new LabRequest(item.getCaseFile(), number, item, request.profile(), request.questions(), request.desiredDueDate(), actor, labAssignee));
         item.setStatus(EvidenceStatus.UNDER_EXAMINATION);
-        notificationService.notify(labAssignee, "LAB_REQUEST_ASSIGNED", "{\"labRequestId\":\"" + created.getId() + "\"}");
+        notificationService.notify(labAssignee, "LAB_REQUEST_ASSIGNED", labPayload(created));
         auditService.record(actor, "LAB_REQUEST_CREATED", "LabRequest", created.getId(), "{\"evidenceId\":\"" + evidenceId + "\"}");
         return created;
     }
@@ -84,7 +84,7 @@ public class LabService {
         if (status == LabRequestStatus.COMPLETED) throw new ApiException(HttpStatus.BAD_REQUEST, "LAB_RESULT_REQUIRED", "Завершение возможно только после внесения заключения");
         if (lab.getStatus() == LabRequestStatus.COMPLETED || status == LabRequestStatus.CREATED) throw new ApiException(HttpStatus.CONFLICT, "INVALID_LAB_STATUS_TRANSITION", "Недопустимый переход статуса экспертизы");
         lab.setStatus(status);
-        notificationService.notify(lab.getRequester(), "LAB_STATUS_CHANGED", "{\"labRequestId\":\"" + lab.getId() + "\",\"status\":\"" + status + "\"}");
+        notificationService.notify(lab.getRequester(), "LAB_STATUS_CHANGED", labPayload(lab, ",\"status\":\"" + status + "\""));
         auditService.record(actor, "LAB_REQUEST_STATUS_CHANGED", "LabRequest", lab.getId(), "{\"status\":\"" + status + "\"}");
         return lab;
     }
@@ -101,8 +101,24 @@ public class LabService {
         }
         lab.complete(normalizedResult);
         lab.getEvidence().setStatus(EvidenceStatus.EXAMINATION_COMPLETED);
-        notificationService.notify(lab.getRequester(), "LAB_RESULT_READY", "{\"labRequestId\":\"" + lab.getId() + "\"}");
+        notificationService.notify(lab.getRequester(), "LAB_RESULT_READY", labPayload(lab));
         auditService.record(actor, "LAB_REQUEST_COMPLETED", "LabRequest", lab.getId(), "{}");
         return lab;
+    }
+
+    private String labPayload(LabRequest lab) {
+        return labPayload(lab, "");
+    }
+
+    private String labPayload(LabRequest lab, String extra) {
+        return "{\"caseId\":\"" + lab.getCaseFile().getId()
+                + "\",\"caseTitle\":\"" + escapeJson(lab.getCaseFile().getTitle())
+                + "\",\"labRequestId\":\"" + lab.getId()
+                + "\",\"registrationNumber\":\"" + escapeJson(lab.getRegistrationNumber())
+                + "\",\"profile\":\"" + escapeJson(lab.getProfile()) + "\"" + extra + "}";
+    }
+
+    private String escapeJson(String value) {
+        return value == null ? "" : value.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 }

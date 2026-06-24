@@ -31,6 +31,8 @@ public class DataSeeder {
             if(cases.findByRegistrationNumber("CASE-2026-DEMO-01").isEmpty()) seedCourier(cases,evidence,versions,tasks,participants,scenes,interviews,labs,hypotheses,edges,detective,assistant,agent,lab);
             if(cases.findByRegistrationNumber("CASE-2026-DEMO-02").isEmpty()) seedMuseum(cases,evidence,versions,tasks,participants,scenes,interviews,labs,hypotheses,edges,detective,assistant,inspector,agent,lab);
             if(cases.findByRegistrationNumber("CASE-2026-DEMO-03").isEmpty()) seedCyber(cases,evidence,versions,tasks,participants,scenes,interviews,hypotheses,edges,reports,properties,detective,assistant,agent);
+            if(cases.findByRegistrationNumber("CASE-2026-DEMO-04").isEmpty()) seedPharmacy(cases,evidence,versions,tasks,participants,scenes,interviews,labs,hypotheses,edges,detective,assistant,inspector,agent,lab);
+            if(cases.findByRegistrationNumber("CASE-2026-DEMO-05").isEmpty()) seedFire(cases,evidence,versions,tasks,participants,scenes,interviews,labs,hypotheses,edges,detective,assistant,inspector,agent,lab);
         };
     }
 
@@ -77,5 +79,31 @@ public class DataSeeder {
         Path directory=Path.of(properties.getStoragePath(),"reports",item.getId().toString()).toAbsolutePath().normalize(); Files.createDirectories(directory); Path file=directory.resolve("REP-DEMO-03-001.txt"); Files.writeString(file,content,StandardCharsets.UTF_8);
         ReportFile report=reports.save(new ReportFile(item,"REP-DEMO-03-001","TEXT",ReportStatus.APPROVED,file.toString(),SecurityHash.sha256(content.getBytes(StandardCharsets.UTF_8)),detective,content));
         edges.save(new GraphEdge(item,NodeType.CASE,item.getId(),NodeType.REPORT,report.getId(),"завершено отчетом",Confidence.CONFIRMED,null,detective));
+    }
+
+    private void seedPharmacy(CaseRepository cases,EvidenceRepository evidence,EvidenceVersionRepository versions,TaskRepository tasks,CaseParticipantRepository participants,IncidentSceneRepository scenes,InterviewRepository interviews,LabRequestRepository labs,HypothesisRepository hypotheses,GraphEdgeRepository edges,UserAccount detective,UserAccount assistant,UserAccount inspector,UserAccount agent,UserAccount lab){
+        CaseFile item=cases.save(new CaseFile("CASE-2026-DEMO-04","Подделка рецептов в аптечной сети",Instant.now().minusSeconds(345_600),Priority.HIGH,"Расследование серии покупок по поддельным электронным рецептам. Демонстрирует цифровые улики, интервью, активную экспертизу и переназначаемые поручения.",detective));
+        item.update(item.getTitle(),item.getOpenedAt(),item.getPriority(),CaseStatus.IN_PROGRESS,item.getDescription()); access(participants,item,detective,assistant,inspector,agent);
+        IncidentScene pharmacy=scenes.save(new IncidentScene(item,"Аптека на Садовой","Касса фиксировала продажи по рецептам одного врача в трех районах за один вечер.","Садовая улица, 18",55.7644,37.6047,inspector));
+        Evidence receipt=evidence(evidence,versions,item,"EV-DEMO-04-001","Пакет электронных рецептов","цифровая",Priority.CRITICAL,"XML-выгрузка рецептов содержит повторяющийся идентификатор устройства и одинаковую подпись клиента.","Аптечная ИС",assistant);
+        Evidence blister=evidence(evidence,versions,item,"EV-DEMO-04-002","Упаковка сильнодействующего препарата","материальная",Priority.HIGH,"Упаковка изъята после контрольной закупки; на блистере есть следы пальцев.","Аптека на Садовой",agent);
+        interviews.save(new Interview(item,"Провизор смены",Instant.now().minusSeconds(250_000),"Сообщила, что покупатель нервничал и показывал QR-код с треснувшего телефона.",detective));
+        TaskItem task=tasks.save(new TaskItem(item,"TASK-DEMO-04-001","Установить устройство генерации рецептов","Сопоставить идентификаторы устройств, IP-адреса и время погашения рецептов.",assistant,detective,Priority.HIGH,Instant.now().plusSeconds(129_600)));
+        labs.save(new LabRequest(item,"LAB-DEMO-04-001",blister,"Дактилоскопия упаковки","Проверить пригодность следов пальцев для идентификации.",Instant.now().plusSeconds(172_800),detective,lab));
+        edge(edges,hypotheses,item,NodeType.EVIDENCE,receipt.getId(),NodeType.TASK,task.getId(),"требует цифровой проверки","Один источник рецептов","Повторяющийся идентификатор устройства указывает на централизованную генерацию рецептов.",Confidence.HIGH,detective);
+        edge(edges,hypotheses,item,NodeType.LOCATION,pharmacy.getId(),NodeType.EVIDENCE,blister.getId(),"место изъятия","Контрольная закупка связывает покупателя с сетью","Материальная улика получена в точке с максимальной концентрацией подозрительных операций.",Confidence.MEDIUM,detective);
+    }
+
+    private void seedFire(CaseRepository cases,EvidenceRepository evidence,EvidenceVersionRepository versions,TaskRepository tasks,CaseParticipantRepository participants,IncidentSceneRepository scenes,InterviewRepository interviews,LabRequestRepository labs,HypothesisRepository hypotheses,GraphEdgeRepository edges,UserAccount detective,UserAccount assistant,UserAccount inspector,UserAccount agent,UserAccount lab){
+        CaseFile item=cases.save(new CaseFile("CASE-2026-DEMO-05","Ночной пожар в логистическом терминале",Instant.now().minusSeconds(518_400),Priority.CRITICAL,"Дело о поджоге склада с финансовым мотивом. Демонстрирует завершенную экспертизу, несколько улик и проверку противоречивых версий.",detective));
+        item.update(item.getTitle(),item.getOpenedAt(),item.getPriority(),CaseStatus.IN_PROGRESS,item.getDescription()); access(participants,item,detective,assistant,inspector,agent);
+        IncidentScene terminal=scenes.save(new IncidentScene(item,"Северный терминал, сектор C","Очаг возгорания найден у ворот разгрузки; система пожаротушения была отключена вручную.","Северное шоссе, 42",55.8281,37.4912,inspector));
+        Evidence canister=evidence(evidence,versions,item,"EV-DEMO-05-001","Канистра с остатками растворителя","материальная",Priority.CRITICAL,"Канистра найдена за рампой. Запах и следы жидкости указывают на ускоритель горения.","Сектор C",agent); canister.setStatus(EvidenceStatus.EXAMINATION_COMPLETED);
+        Evidence accessVideo=evidence(evidence,versions,item,"EV-DEMO-05-002","Фрагмент видео с КПП","цифровая",Priority.HIGH,"На записи виден фургон подрядчика за 18 минут до отключения пожаротушения.","Пост охраны",assistant);
+        interviews.save(new Interview(item,"Начальник смены терминала",Instant.now().minusSeconds(430_000),"Подтвердил конфликт с подрядчиком из-за неоплаченного простоя транспорта.",detective));
+        TaskItem task=tasks.save(new TaskItem(item,"TASK-DEMO-05-001","Проверить фургон подрядчика","Установить маршрут фургона и водителя, сопоставить с камерами соседних объектов.",agent,detective,Priority.CRITICAL,Instant.now().plusSeconds(86_400))); task.updateStatus(TaskStatus.IN_PROGRESS,"Запрошены камеры соседнего терминала.");
+        LabRequest request=labs.save(new LabRequest(item,"LAB-DEMO-05-001",canister,"Пожарно-техническая экспертиза","Определить состав горючей жидкости и связь с очагом возгорания.",Instant.now().plusSeconds(86_400),detective,lab)); request.complete("Обнаружены остатки толуола и ацетона. Состав совпадает со следами из зоны первичного очага.");
+        edge(edges,hypotheses,item,NodeType.EVIDENCE,canister.getId(),NodeType.LOCATION,terminal.getId(),"подтверждает очаг","Использован ускоритель горения","Состав жидкости совпадает со следами в зоне первичного очага.",Confidence.CONFIRMED,detective);
+        edge(edges,hypotheses,item,NodeType.EVIDENCE,accessVideo.getId(),NodeType.TASK,task.getId(),"требует проверки","Фургон мог доставить канистру","Время появления фургона согласуется с отключением пожаротушения.",Confidence.HIGH,detective);
     }
 }

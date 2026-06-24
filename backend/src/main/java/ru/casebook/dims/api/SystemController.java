@@ -48,8 +48,11 @@ public class SystemController {
     }
 
     @GetMapping("/notifications")
-    public List<NotificationDto> notifications(@RequestHeader("X-User-Id") String userId) {
+    public List<NotificationDto> notifications(@RequestHeader("X-User-Id") String userId, @RequestParam(required = false) UUID caseId) {
         UserAccount actor = currentUserService.requireUser(userId);
+        if (caseId != null) {
+            return notifications.findByRecipientIdAndPayloadJsonContainingOrderByCreatedAtDesc(actor.getId(), "\"caseId\":\"" + caseId + "\"").stream().map(NotificationDto::from).toList();
+        }
         return notifications.findByRecipientIdOrderByCreatedAtDesc(actor.getId()).stream().map(NotificationDto::from).toList();
     }
 

@@ -66,7 +66,7 @@ public class TaskService {
 
         String number="TASK-"+caseFile.getOpenedAt().atZone(java.time.ZoneOffset.UTC).getYear()+"-"+UUID.randomUUID().toString().substring(0,8).toUpperCase();
         TaskItem created = tasks.save(new TaskItem(caseFile,number, request.title(), request.description(), assignee, actor, request.priority(), request.deadline()));
-        notificationService.notify(assignee, "TASK_ASSIGNED", "{\"taskId\":\"" + created.getId() + "\"}");
+        notificationService.notify(assignee, "TASK_ASSIGNED", taskPayload(created));
         auditService.record(actor, "TASK_CREATED", "Task", created.getId(), "{\"caseId\":\"" + caseId + "\"}");
         return created;
     }
@@ -86,7 +86,7 @@ public class TaskService {
             String taskId=task.getId().toString();
             notifications.deleteByRecipientIdAndTypeAndPayloadJsonContaining(oldAssignee.getId(),"TASK_ASSIGNED",taskId);
             notifications.deleteByRecipientIdAndTypeAndPayloadJsonContaining(oldAssignee.getId(),"TASK_REASSIGNED",taskId);
-            notificationService.notify(assignee, "TASK_REASSIGNED", "{\"taskId\":\"" + task.getId() + "\"}");
+            notificationService.notify(assignee, "TASK_REASSIGNED", taskPayload(task));
             auditService.record(actor, "TASK_REASSIGNED", "Task", task.getId(), "{\"assigneeId\":\"" + assignee.getId() + "\"}");
         } else {
             auditService.record(actor, "TASK_UPDATED", "Task", task.getId(), "{}");
@@ -150,4 +150,15 @@ public class TaskService {
 
     private void requireActive(CaseFile item){if(item.getStatus()==ru.casebook.dims.domain.CaseStatus.CLOSED)throw new ApiException(HttpStatus.CONFLICT,"CASE_NOT_ACTIVE","Нельзя назначать задачи в закрытом деле");}
     private void requireParticipant(UUID caseId,UserAccount assignee){if(!participants.existsByCaseFileIdAndUserAccountId(caseId,assignee.getId()))throw new ApiException(HttpStatus.BAD_REQUEST,"ASSIGNEE_NOT_IN_CASE","Исполнитель не допущен к материалам дела");}
-}
+
+    private String taskPayload(TaskItem task) {
+        return "{\"caseId\":\"" + task.getCaseFile().getId()
+                + "\",\"caseTitle\":\"" + escapeJson(task.getCaseFile().getTitle())
+                + "\",\"taskId\":\"" + task.getId()
+                + "\",\"registrationNumber\":\"" + escapeJson(task.getRegistrationNumber())
+                + "\",\"title\":\"" + escapeJson(task.getTitle()) + "\"}";
+    }
+
+    private String escapeJson(String value) {
+        return value == null ? "" : value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }}
