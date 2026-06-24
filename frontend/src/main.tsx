@@ -8,6 +8,8 @@ import {
   Camera,
   CheckCircle2,
   ClipboardList,
+  Download,
+  Eye,
   FileText,
   Loader2,
   ListFilter,
@@ -34,6 +36,8 @@ type CaseFile = { id: string; registrationNumber: string; title: string; openedA
 type IncidentScene = { id: string; caseId: string; title: string; description: string; address: string; latitude?: number; longitude?: number; createdAt: string };
 type Interview = { id: string; caseId: string; interviewee: string; occurredAt: string; protocolText: string; createdAt: string };
 type Evidence = { id: string; caseId: string; registrationNumber: string; name: string; type: string; importance: string; description: string; discoveryDateTime: string; latitude?: number; longitude?: number; locationTitle?: string; status: string };
+type Attachment = { id: string; ownerType: string; ownerId: string; fileName: string; mimeType: string; sizeBytes: number; sha256: string; capturedAt?: string; createdAt: string };
+type EvidenceVersion = { id: string; evidenceId: string; descriptionSnapshot: string; changedBy: string; changedAt: string; versionNumber: number };
 type TaskItem = { id: string; caseId: string; registrationNumber: string; title: string; description: string; assigneeId: string; priority: string; deadline: string; status: string; resultText?: string; resultEvidenceId?: string };
 type NotificationItem = { id: string; type: string; payloadJson: string; readAt?: string; createdAt: string };
 type LabRequest = { id: string; caseId: string; registrationNumber: string; evidenceId: string; profile: string; questions: string; desiredDueDate: string; status: string; requesterId: string; labAssigneeId?: string; resultText?: string };
@@ -180,6 +184,8 @@ function App() {
   const [cases, setCases] = useState<CaseFile[]>([]);
   const [selectedCaseId, setSelectedCaseId] = useState("");
   const [evidence, setEvidence] = useState<Evidence[]>([]);
+  const [evidenceAttachments, setEvidenceAttachments] = useState<Record<string, Attachment[]>>({});
+  const [evidenceVersions, setEvidenceVersions] = useState<Record<string, EvidenceVersion[]>>({});
   const [scenes, setScenes] = useState<IncidentScene[]>([]);
   const [interviews, setInterviews] = useState<Interview[]>([]);
   const [participants, setParticipants] = useState<User[]>([]);
@@ -233,6 +239,7 @@ function App() {
   const graphLayout=graphLayouts[selectedCaseId]??EMPTY_GRAPH_LAYOUT;
   const graphNodePositions=graphLayout.positions;
   const firstEvidence = evidence[0];
+  const editingEvidence = editingEvidenceId ? evidence.find((item) => item.id === editingEvidenceId) : undefined;
   const visibleTasks = currentUser?.role === "AGENT" || currentUser?.role === "ASSISTANT" ? myTasks : tasks;
   const visibleLabs = currentUser?.role === "LAB_ANALYST" ? labQueue : labs;
   const visibleGraphNodes = useMemo(() => {
@@ -269,6 +276,10 @@ function App() {
       request<User[]>(`/cases/${caseId}/participants`),
     ]);
     setEvidence(loadedEvidence);
+    const attachmentEntries = await Promise.all(loadedEvidence.map(async (item) => [item.id, await request<Attachment[]>(`/Evidence/${item.id}/attachments`)] as const));
+    setEvidenceAttachments(Object.fromEntries(attachmentEntries));
+    const versionEntries = await Promise.all(loadedEvidence.map(async (item) => [item.id, await request<EvidenceVersion[]>(`/evidence/${item.id}/versions`)] as const));
+    setEvidenceVersions(Object.fromEntries(versionEntries));
     setTasks(loadedTasks);
     setGraph(loadedGraph);
     setScenes(loadedScenes);
@@ -828,6 +839,23 @@ function App() {
     URL.revokeObjectURL(url);
   }
 
+  async function openAttachment(attachment: Attachment, download = false) {
+    if (!userId) return;
+    const response = await fetch(`${API}/attachments/${attachment.id}/download`, { headers: { "X-User-Id": userId } });
+    if (!response.ok) throw new Error("Не удалось получить файл");
+    const url = URL.createObjectURL(await response.blob());
+    if (download) {
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = attachment.fileName;
+      link.click();
+      URL.revokeObjectURL(url);
+      return;
+    }
+    window.open(url, "_blank", "noopener");
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  }
+
   const actions = useMemo(
     () => [
       { label: "Создать дело", icon: BookOpen, run: () => Promise.resolve(openForm("case")) },
@@ -975,6 +1003,11 @@ function App() {
         {activeForm === "evidence" ? (
           <FormDialog title={editingEvidenceId ? "Изменить улику" : "Новая улика"} onClose={closeForm}>
             <form className="entity-form" onSubmit={submitEvidence} noValidate>
+              {editingEvidence ? (
+                <FormField label="Инвентарный номер">
+                  <input value={editingEvidence.registrationNumber} readOnly />
+                </FormField>
+              ) : null}
               <FormField label="Название" error={fieldErrors.name}>
                 <input value={evidenceDraft.name} onChange={(event) => setEvidenceDraft((draft) => ({ ...draft, name: event.target.value }))} autoFocus />
               </FormField>
@@ -994,12 +1027,49 @@ function App() {
               </FormField>
               <FormField label="Широта"><input type="number" step="any" value={evidenceDraft.latitude} onChange={(event) => setEvidenceDraft((draft) => ({ ...draft, latitude: event.target.value }))} /></FormField>
               <FormField label="Долгота"><input type="number" step="any" value={evidenceDraft.longitude} onChange={(event) => setEvidenceDraft((draft) => ({ ...draft, longitude: event.target.value }))} /></FormField>
-              <FormField label="Фото или файл до 20 МБ" error={evidenceFile && evidenceFile.size > 20 * 1024 * 1024 ? "Файл превышает лимит 20 МБ" : undefined} wide>
+              <FormField label="Файл" error={evidenceFile && evidenceFile.size > 20 * 1024 * 1024 ? "Файл превышает лимит 20 МБ" : undefined} wide>
                 <input type="file" onChange={(event) => setEvidenceFile(event.target.files?.[0] ?? null)} />
+                {evidenceFile ? (
+                  <div className="file-attach-status">
+                    <CheckCircle2 size={15} />
+                    <span title={evidenceFile.name}>{evidenceFile.name}</span>
+                    <small>выбран для прикрепления</small>
+                  </div>
+                ) : null}
+                {editingEvidenceId && (evidenceAttachments[editingEvidenceId] ?? []).length ? (
+                  <div className="attachment-list attachment-list-form">
+                    {(evidenceAttachments[editingEvidenceId] ?? []).map((attachment) => (
+                      <div className="attachment-item" key={attachment.id}>
+                        <small title={attachment.fileName}>{attachment.fileName}</small>
+                        <div className="attachment-actions">
+                          <button type="button" onClick={() => startTransition(() => openAttachment(attachment).catch((error) => setMessage(error.message)))} title="Открыть файл" aria-label="Открыть файл"><Eye size={14} /></button>
+                          <button type="button" onClick={() => startTransition(() => openAttachment(attachment, true).catch((error) => setMessage(error.message)))} title="Скачать файл" aria-label="Скачать файл"><Download size={14} /></button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </FormField>
               <FormField label="Описание" error={fieldErrors.description} wide>
                 <textarea value={evidenceDraft.description} onChange={(event) => setEvidenceDraft((draft) => ({ ...draft, description: event.target.value }))} rows={4} />
               </FormField>
+              {editingEvidenceId ? (
+                <section className="version-history form-field-wide">
+                  <div className="version-history-heading">
+                    <strong>История описания</strong>
+                    <span>{evidenceVersions[editingEvidenceId]?.length ?? 0}</span>
+                  </div>
+                  {(evidenceVersions[editingEvidenceId] ?? []).slice().reverse().map((version) => (
+                    <article className="version-history-item" key={version.id}>
+                      <div>
+                        <strong>Версия {version.versionNumber}</strong>
+                        <span>{new Date(version.changedAt).toLocaleString("ru-RU")}</span>
+                      </div>
+                      <p>{version.descriptionSnapshot}</p>
+                    </article>
+                  ))}
+                </section>
+              ) : null}
               <FormActions pending={isPending} onCancel={closeForm} />
             </form>
           </FormDialog>
@@ -1096,8 +1166,22 @@ function App() {
           <Panel title="Улики" count={evidence.length}>
             {evidence.map((item) => (
               <article className="row" key={item.id}>
+                <span className="inventory-number">{item.registrationNumber}</span>
                 <strong>{item.name}</strong>
                 <span>{item.type} · {item.status}</span>
+                {(evidenceAttachments[item.id] ?? []).length ? (
+                  <div className="attachment-list">
+                    {(evidenceAttachments[item.id] ?? []).map((attachment) => (
+                      <div className="attachment-item" key={attachment.id}>
+                        <small title={attachment.fileName}>{attachment.fileName}</small>
+                        <div className="attachment-actions">
+                          <button type="button" onClick={() => startTransition(() => openAttachment(attachment).catch((error) => setMessage(error.message)))} title="Открыть файл" aria-label="Открыть файл"><Eye size={14} /></button>
+                          <button type="button" onClick={() => startTransition(() => openAttachment(attachment, true).catch((error) => setMessage(error.message)))} title="Скачать файл" aria-label="Скачать файл"><Download size={14} /></button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
                 <WindowActions onEdit={currentUser?.role === "DETECTIVE" || currentUser?.role === "ASSISTANT" || currentUser?.role === "INSPECTOR" ? ()=>editEvidence(item) : undefined} onDelete={currentUser?.role==="DETECTIVE" ? ()=>startTransition(()=>deleteEntity(`/evidence/${item.id}`,item.name).catch(handleFormError)) : undefined}/>
               </article>
             ))}

@@ -37,6 +37,21 @@ public class AttachmentService {
         return attachments.findByOwnerTypeAndOwnerId(ownerType, ownerId);
     }
 
+    public AttachmentDownload download(UserAccount actor, UUID id) {
+        currentUserService.requireAnyRole(actor, Role.DETECTIVE, Role.ASSISTANT, Role.INSPECTOR, Role.AGENT, Role.LAB_ANALYST);
+        Attachment attachment = attachments.findById(id)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "ATTACHMENT_NOT_FOUND", "File not found"));
+        try {
+            byte[] content = Files.readAllBytes(Path.of(attachment.getStoragePath()));
+            if (!SecurityHash.sha256(content).equals(attachment.getSha256())) {
+                throw new ApiException(HttpStatus.CONFLICT, "ATTACHMENT_INTEGRITY_VIOLATION", "File checksum mismatch");
+            }
+            return new AttachmentDownload(content, attachment.getMimeType(), attachment.getFileName());
+        } catch (IOException ex) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "ATTACHMENT_FILE_NOT_FOUND", "File is missing from storage");
+        }
+    }
+
     @Transactional
     public Attachment register(UserAccount actor, String ownerType, UUID ownerId, String fileName, String mimeType, long sizeBytes) {
         currentUserService.requireAnyRole(actor, Role.DETECTIVE, Role.ASSISTANT, Role.INSPECTOR, Role.AGENT, Role.LAB_ANALYST);
@@ -80,4 +95,5 @@ public class AttachmentService {
         long maxBytes = properties.getFileUploadMaxMb() * 1024L * 1024L;
         if (sizeBytes > maxBytes) throw new ApiException(HttpStatus.BAD_REQUEST, "FILE_TOO_LARGE", "Файл превышает лимит " + properties.getFileUploadMaxMb() + " MB");
     }
+    public record AttachmentDownload(byte[] content, String mediaType, String fileName) {}
 }

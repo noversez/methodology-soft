@@ -11,8 +11,12 @@ import ru.casebook.dims.service.CurrentUserService;
 import java.util.List;
 import java.util.UUID;
 import java.time.Instant;
+import java.nio.charset.StandardCharsets;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.util.UriUtils;
 
 @RestController
 public class AttachmentController {
@@ -57,5 +61,15 @@ public class AttachmentController {
     @GetMapping("/api/{ownerType}/{ownerId}/attachments")
     public List<AttachmentResponse> list(@PathVariable String ownerType, @PathVariable UUID ownerId) {
         return attachmentService.list(ownerType, ownerId).stream().map(AttachmentResponse::from).toList();
+    }
+
+    @GetMapping("/api/attachments/{id}/download")
+    public ResponseEntity<byte[]> download(@RequestHeader("X-User-Id") String userId, @PathVariable UUID id) {
+        var file = attachmentService.download(currentUserService.requireUser(userId), id);
+        String encodedName = UriUtils.encode(file.fileName(), StandardCharsets.UTF_8);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(file.mediaType()))
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename*=UTF-8''" + encodedName)
+                .body(file.content());
     }
 }

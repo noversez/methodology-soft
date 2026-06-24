@@ -75,7 +75,7 @@ public class EvidenceService {
         String oldDescription = item.getDescription();
         item.update(request.name(), request.type(), request.importance(), request.description(), request.discoveryDateTime(), request.latitude(), request.longitude(), request.locationTitle());
         if (!oldDescription.equals(request.description())) {
-            versions.save(new EvidenceVersion(item, request.description(), actor, item.getVersion() + 1));
+            versions.save(new EvidenceVersion(item, request.description(), actor, versions.maxVersionNumber(item.getId()) + 1));
         }
         auditService.record(actor, "EVIDENCE_UPDATED", "Evidence", item.getId(), "{}");
         return item;
